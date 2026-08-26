@@ -1,13 +1,15 @@
 import { z } from 'zod';
 import {
   WorkspaceConnectorMediaUploadMetadataSchema,
-  type WorkspaceConnectorMediaUploadMetadata
+  WorkspaceConnectorMediaUploadMetadataV2Schema,
+  type WorkspaceConnectorMediaUploadMetadata,
+  type WorkspaceConnectorMediaUploadMetadataV2
 } from '../../../../packages/workspace-connector-contracts/src';
 import type { PluginDataStore } from '../../../platform/pluginRuntime/manager/pluginDataStore';
 
 const RETRY_PREFIX = 'media-retry:v1:';
 
-const mediaRetrySchema = z.object({
+const mediaRetryV1Schema = z.object({
   schemaVersion: z.literal(1),
   sessionId: z.string().min(1).max(512),
   capabilityId: z.string().min(1).max(160),
@@ -20,6 +22,21 @@ const mediaRetrySchema = z.object({
   expiresAt: z.string().datetime()
 }).strict();
 
+const mediaRetryV2Schema = z.object({
+  schemaVersion: z.literal(2),
+  sessionId: z.string().min(1).max(512),
+  capabilityId: z.string().min(1).max(160),
+  fileId: z.string().min(1).max(512),
+  mediaId: z.string().min(1).max(512),
+  responseChatId: z.string().min(1).max(512),
+  metadata: WorkspaceConnectorMediaUploadMetadataV2Schema,
+  attemptCount: z.number().int().nonnegative().max(1000),
+  nextAttemptAt: z.string().datetime(),
+  expiresAt: z.string().datetime()
+}).strict();
+
+const mediaRetrySchema = z.discriminatedUnion('schemaVersion', [mediaRetryV1Schema, mediaRetryV2Schema]);
+
 export type WorkspaceMediaRetry = z.infer<typeof mediaRetrySchema>;
 
 export function newWorkspaceMediaRetry(input: {
@@ -31,8 +48,25 @@ export function newWorkspaceMediaRetry(input: {
   metadata: WorkspaceConnectorMediaUploadMetadata;
   expiresAt: string;
 }): WorkspaceMediaRetry {
-  return mediaRetrySchema.parse({
+  return mediaRetryV1Schema.parse({
     schemaVersion: 1,
+    ...input,
+    attemptCount: 0,
+    nextAttemptAt: new Date().toISOString()
+  });
+}
+
+export function newWorkspaceMediaRetryV2(input: {
+  sessionId: string;
+  capabilityId: string;
+  fileId: string;
+  mediaId: string;
+  responseChatId: string;
+  metadata: WorkspaceConnectorMediaUploadMetadataV2;
+  expiresAt: string;
+}): WorkspaceMediaRetry {
+  return mediaRetryV2Schema.parse({
+    schemaVersion: 2,
     ...input,
     attemptCount: 0,
     nextAttemptAt: new Date().toISOString()
@@ -65,6 +99,19 @@ export async function dueWorkspaceMediaRetries(
       return parsed.success ? [parsed.data] : [];
     })
     .filter((retry) => new Date(retry.nextAttemptAt).getTime() <= now.getTime());
+}
+
+export async function workspaceMediaRetriesForSession(
+  store: PluginDataStore,
+  sessionId: string
+): Promise<WorkspaceMediaRetry[]> {
+  const records = await store.list();
+  return records
+    .filter((record) => record.scopeId === null && record.key.startsWith(RETRY_PREFIX))
+    .flatMap((record) => {
+      const parsed = mediaRetrySchema.safeParse(record.valueJson);
+      return parsed.success && parsed.data.sessionId === sessionId ? [parsed.data] : [];
+    });
 }
 
 export function rescheduleWorkspaceMediaRetry(

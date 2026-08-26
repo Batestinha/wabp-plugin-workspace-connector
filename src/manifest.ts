@@ -7,11 +7,13 @@ import {
 } from './serviceApi';
 
 export const WORKSPACE_CONNECTOR_PLUGIN_ID = 'official.workspace-connector';
+export const WORKSPACE_CONNECTOR_SESSION_TIMER_JOB = 'workspace-connector.session-timer';
+export const WORKSPACE_CONNECTOR_AMBIENT_JOB = 'workspace-connector.ambient-event';
 
 export const workspaceConnectorManifest: PluginManifest = {
   pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID,
   kind: 'managed_group',
-  version: '0.3.0',
+  version: '0.4.0',
   coreApiRange: '>=0.2.0',
   messageNamespace: 'official.workspace-connector',
   descriptionKey: 'official.workspace-connector.description',
@@ -45,7 +47,7 @@ export const workspaceConnectorManifest: PluginManifest = {
       availability: { invocation: 'either' }
     }]
   },
-  eventSubscriptions: ['message', 'private.message'],
+  eventSubscriptions: ['message', 'private.message', 'group.scope.covered', 'plugin.job'],
   services: [{
     serviceId: WORKSPACE_CONNECTOR_PROJECTION_SERVICE_ID,
     description: 'Publish an idempotent, generation-fenced projection to the configured Workspace.',
@@ -59,8 +61,20 @@ export const workspaceConnectorManifest: PluginManifest = {
   requiredBotCapabilities: [],
   configSchema: workspaceConnectorConfigSchema,
   dangerousActions: [],
-  backgroundJobs: [],
-  cancellation: { workflows: [] },
+  backgroundJobs: [WORKSPACE_CONNECTOR_SESSION_TIMER_JOB, WORKSPACE_CONNECTOR_AMBIENT_JOB],
+  cancellation: {
+    workflows: [{
+      id: 'workspace-remote-session',
+      description: 'An active cancellable session owned by the connected Workspace.',
+      mode: 'plugin-handler',
+      scope: 'actor-chat',
+      commands: ['/workspace'],
+      cancellableStates: ['active', 'collecting'],
+      terminalStates: ['completed', 'cancelled', 'expired', 'failed'],
+      effects: ['cancel-remote-session', 'delete-staged-media'],
+      auditAction: 'workspace-connector.session.cancel'
+    }]
+  },
   assistant: {
     summary: 'Application-neutral Workspace capability discovery, invocation, projection publication, outbound delivery, and bounded media handoff.',
     useCases: [

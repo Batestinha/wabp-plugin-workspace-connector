@@ -2,12 +2,22 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
   WorkspaceConnectorActorSchema,
+  WorkspaceConnectorConversationPointV2Schema,
+  WorkspaceConnectorScopeEvidenceV2Schema,
+  WorkspaceConnectorTimerV2Schema,
   type WorkspaceConnectorAction,
-  type WorkspaceConnectorInvocationResult
+  type WorkspaceConnectorActionV2,
+  type WorkspaceConnectorInvocationResult,
+  type WorkspaceConnectorInvocationResultV2
 } from '../../../../packages/workspace-connector-contracts/src';
 import type { PluginDataStore } from '../../../platform/pluginRuntime/manager/pluginDataStore';
 
-const storedSessionSchema = z.object({
+const choiceSchema = z.object({
+  id: z.string().trim().min(1).max(512),
+  label: z.string().min(1).max(240)
+}).strict();
+
+const storedSessionV1Schema = z.object({
   schemaVersion: z.literal(1),
   sessionId: z.string().min(1).max(512),
   capabilityId: z.string().min(1).max(160),
@@ -21,32 +31,78 @@ const storedSessionSchema = z.object({
   groupWid: z.string().min(1).max(512),
   surface: z.enum(['private', 'group']),
   locale: z.string().trim().min(2).max(35),
-  choices: z.array(z.object({
-    id: z.string().trim().min(1).max(512),
-    label: z.string().min(1).max(240)
-  }).strict()).max(32),
+  choices: z.array(choiceSchema).max(32),
   acceptedMimeTypes: z.array(z.string().min(1).max(160)).min(1).max(64).optional(),
   maximumFileBytes: z.number().int().positive().max(2 ** 31 - 1).optional(),
   maximumFiles: z.number().int().positive().max(1_000).optional(),
   mediaMessageIds: z.array(z.string().min(1).max(512)).max(1_000)
-}).strict().superRefine((value, context) => {
-  if (value.surface === 'private' && !value.scopeId.startsWith('direct:')) {
+}).strict();
+
+const storedSessionV2Schema = z.object({
+  schemaVersion: z.literal(2),
+  sessionId: z.string().min(1).max(512),
+  capabilityId: z.string().min(1).max(160),
+  catalogRevision: z.number().int().nonnegative(),
+  catalogDigestSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  expiresAt: z.string().datetime(),
+  actorIdentityId: z.string().min(1).max(512),
+  actor: WorkspaceConnectorActorSchema,
+  actorPrivateChatId: z.string().min(1).max(512),
+  actorMentionWid: z.string().min(1).max(512),
+  scopeId: z.string().min(1).max(512),
+  origin: WorkspaceConnectorConversationPointV2Schema,
+  groupWid: z.string().min(1).max(512),
+  scopeEvidence: WorkspaceConnectorScopeEvidenceV2Schema,
+  locale: z.string().trim().min(2).max(35),
+  choices: z.array(choiceSchema).max(64),
+  acceptedMessageKinds: z.array(z.enum(['document', 'image', 'video', 'audio'])).min(1).max(4).optional(),
+  acceptedMimeTypes: z.array(z.string().min(1).max(160)).min(1).max(64).optional(),
+  maximumFileBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  maximumFiles: z.number().int().positive().max(10_000).optional(),
+  mediaChatId: z.string().min(1).max(512).optional(),
+  timer: WorkspaceConnectorTimerV2Schema.optional(),
+  mediaMessageIds: z.array(z.string().min(1).max(512)).max(10_000)
+}).strict();
+
+const storedSessionSchema = z.discriminatedUnion('schemaVersion', [
+  storedSessionV1Schema,
+  storedSessionV2Schema
+]).superRefine((value, context) => {
+  if (value.schemaVersion === 1) {
+    if (value.surface === 'private' && !value.scopeId.startsWith('direct:')) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['scopeId'],
+        message: 'private Workspace v1 sessions require a direct scope'
+      });
+    }
+    if (value.surface === 'group' && !value.groupWid.toLowerCase().endsWith('@g.us')) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['groupWid'],
+        message: 'group Workspace sessions require a group route'
+      });
+    }
+    return;
+  }
+  if (value.scopeEvidence.scopeId !== value.scopeId) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
-      path: ['scopeId'],
-      message: 'private Workspace sessions require a direct scope'
+      path: ['scopeEvidence', 'scopeId'],
+      message: 'session scope evidence must bind the session scope'
     });
   }
-  if (value.surface === 'group' && !value.groupWid.toLowerCase().endsWith('@g.us')) {
+  if ((value.acceptedMessageKinds !== undefined) !== (value.mediaChatId !== undefined)) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
-      path: ['groupWid'],
-      message: 'group Workspace sessions require a group route'
+      path: ['mediaChatId'],
+      message: 'media collection requires an exact accepted chat'
     });
   }
 });
 
 export type StoredWorkspaceMediaSession = z.infer<typeof storedSessionSchema>;
+export type StoredWorkspaceSessionV2 = z.infer<typeof storedSessionV2Schema>;
 
 export async function rememberWorkspaceSession(input: {
   store: PluginDataStore;
@@ -66,8 +122,9 @@ export async function rememberWorkspaceSession(input: {
   const request = input.result.actions.find((action) => action.kind === 'request_media');
   if (!input.result.sessionId || !input.result.sessionExpiresAt) return;
   const choice = input.result.actions.find((action) => action.kind === 'choice');
-  const sameSession = input.previousSession?.sessionId === input.result.sessionId;
-  const session = storedSessionSchema.parse({
+  const previousV1 = input.previousSession?.schemaVersion === 1 ? input.previousSession : undefined;
+  const sameSession = previousV1?.sessionId === input.result.sessionId;
+  const parsed = storedSessionSchema.parse({
     schemaVersion: 1,
     sessionId: input.result.sessionId,
     capabilityId: input.capabilityId,
@@ -87,12 +144,73 @@ export async function rememberWorkspaceSession(input: {
       maximumFileBytes: request.maximumFileBytes,
       maximumFiles: request.maximumFiles
     } : {}),
-    mediaMessageIds: sameSession ? input.previousSession?.mediaMessageIds ?? [] : []
+    mediaMessageIds: sameSession ? previousV1?.mediaMessageIds ?? [] : []
   });
+  if (parsed.schemaVersion !== 1) throw new Error('Workspace session version changed during validation.');
+  const session = parsed;
   if (input.previousSession && !sameSession) {
     await forgetWorkspaceMediaSession(input.store, input.previousSession);
   }
   await storeWorkspaceSession(input.store, session);
+}
+
+export async function rememberWorkspaceSessionV2(input: {
+  store: PluginDataStore;
+  result: WorkspaceConnectorInvocationResultV2;
+  actorIdentityId: string;
+  actor: z.infer<typeof WorkspaceConnectorActorSchema>;
+  actorPrivateChatId: string;
+  actorMentionWid: string;
+  scopeId: string;
+  origin: z.infer<typeof WorkspaceConnectorConversationPointV2Schema>;
+  groupWid: string;
+  scopeEvidence: z.infer<typeof WorkspaceConnectorScopeEvidenceV2Schema>;
+  capabilityId: string;
+  catalogRevision: number;
+  catalogDigestSha256: string;
+  locale: string;
+  mediaChatId?: string | undefined;
+  previousSession?: StoredWorkspaceMediaSession | undefined;
+}): Promise<StoredWorkspaceSessionV2 | undefined> {
+  if (!input.result.session) return undefined;
+  const request = input.result.actions.find((action) => action.kind === 'request_media');
+  const choice = input.result.actions.find((action) => action.kind === 'choice');
+  const previousV2 = input.previousSession?.schemaVersion === 2 ? input.previousSession : undefined;
+  const sameSession = previousV2?.sessionId === input.result.session.sessionId;
+  const parsed = storedSessionSchema.parse({
+    schemaVersion: 2,
+    sessionId: input.result.session.sessionId,
+    capabilityId: input.capabilityId,
+    catalogRevision: input.catalogRevision,
+    catalogDigestSha256: input.catalogDigestSha256,
+    expiresAt: input.result.session.expiresAt,
+    actorIdentityId: input.actorIdentityId,
+    actor: input.actor,
+    actorPrivateChatId: input.actorPrivateChatId,
+    actorMentionWid: input.actorMentionWid,
+    scopeId: input.scopeId,
+    origin: input.origin,
+    groupWid: input.groupWid,
+    scopeEvidence: input.scopeEvidence,
+    locale: input.locale,
+    choices: choice?.choices ?? [],
+    ...(request ? {
+      acceptedMessageKinds: request.acceptedMessageKinds,
+      acceptedMimeTypes: request.acceptedMimeTypes,
+      maximumFileBytes: request.maximumFileBytes,
+      maximumFiles: request.maximumFiles,
+      mediaChatId: input.mediaChatId
+    } : {}),
+    ...(input.result.session.timer ? { timer: input.result.session.timer } : {}),
+    mediaMessageIds: sameSession ? previousV2?.mediaMessageIds ?? [] : []
+  });
+  if (parsed.schemaVersion !== 2) throw new Error('Workspace session version changed during validation.');
+  const session = parsed;
+  if (input.previousSession && !sameSession) {
+    await forgetWorkspaceMediaSession(input.store, input.previousSession);
+  }
+  await storeWorkspaceSession(input.store, session);
+  return session;
 }
 
 /** Backwards-compatible media-specific entry point for command callers. */
@@ -119,17 +237,17 @@ export async function reserveWorkspaceMediaFile(
 
 export async function refreshWorkspaceSessionActions(
   store: PluginDataStore,
-  session: StoredWorkspaceMediaSession,
+  session: Extract<StoredWorkspaceMediaSession, { schemaVersion: 1 }>,
   actions: WorkspaceConnectorAction[]
 ): Promise<StoredWorkspaceMediaSession> {
   const choice = actions.find((action) => action.kind === 'choice');
   const request = actions.find((action) => action.kind === 'request_media');
-  const sessionWithoutMediaRequest = { ...session };
-  delete sessionWithoutMediaRequest.acceptedMimeTypes;
-  delete sessionWithoutMediaRequest.maximumFileBytes;
-  delete sessionWithoutMediaRequest.maximumFiles;
-  const updated = storedSessionSchema.parse({
-    ...sessionWithoutMediaRequest,
+  const withoutRequest: Record<string, unknown> = { ...session };
+  delete withoutRequest.acceptedMimeTypes;
+  delete withoutRequest.maximumFileBytes;
+  delete withoutRequest.maximumFiles;
+  const parsed = storedSessionSchema.parse({
+    ...withoutRequest,
     choices: choice?.choices ?? [],
     ...(request ? {
       acceptedMimeTypes: request.acceptedMimeTypes,
@@ -137,6 +255,41 @@ export async function refreshWorkspaceSessionActions(
       maximumFiles: request.maximumFiles
     } : {})
   });
+  if (parsed.schemaVersion !== 1) throw new Error('Workspace session version changed during validation.');
+  const updated = parsed;
+  await storeWorkspaceSession(store, updated);
+  return updated;
+}
+
+export async function refreshWorkspaceSessionActionsV2(
+  store: PluginDataStore,
+  session: StoredWorkspaceSessionV2,
+  actions: WorkspaceConnectorActionV2[],
+  input: { mediaChatId?: string | undefined; timer?: z.infer<typeof WorkspaceConnectorTimerV2Schema> | undefined }
+): Promise<StoredWorkspaceSessionV2> {
+  const choice = actions.find((action) => action.kind === 'choice');
+  const request = actions.find((action) => action.kind === 'request_media');
+  const withoutRequest: Record<string, unknown> = { ...session };
+  delete withoutRequest.acceptedMessageKinds;
+  delete withoutRequest.acceptedMimeTypes;
+  delete withoutRequest.maximumFileBytes;
+  delete withoutRequest.maximumFiles;
+  delete withoutRequest.mediaChatId;
+  delete withoutRequest.timer;
+  const parsed = storedSessionSchema.parse({
+    ...withoutRequest,
+    choices: choice?.choices ?? [],
+    ...(request ? {
+      acceptedMessageKinds: request.acceptedMessageKinds,
+      acceptedMimeTypes: request.acceptedMimeTypes,
+      maximumFileBytes: request.maximumFileBytes,
+      maximumFiles: request.maximumFiles,
+      mediaChatId: input.mediaChatId
+    } : {}),
+    ...(input.timer ? { timer: input.timer } : {})
+  });
+  if (parsed.schemaVersion !== 2) throw new Error('Workspace session version changed during validation.');
+  const updated = parsed;
   await storeWorkspaceSession(store, updated);
   return updated;
 }
@@ -145,10 +298,9 @@ async function storeWorkspaceSession(
   store: PluginDataStore,
   session: StoredWorkspaceMediaSession
 ): Promise<void> {
-  await Promise.all([
-    store.set(exactSessionKey(session.actorIdentityId, session.originatingChatId), session),
-    store.set(actorSessionKey(session.actorIdentityId), session)
-  ]);
+  await Promise.all(workspaceSessionRouteChatIds(session).map((chatId) =>
+    store.set(exactSessionKey(session.actorIdentityId, chatId), session)
+  ).concat(store.set(actorSessionKey(session.actorIdentityId), session)));
 }
 
 export async function findWorkspaceMediaSession(
@@ -164,7 +316,7 @@ export async function findWorkspaceMediaSession(
     const parsed = storedSessionSchema.safeParse(await store.get(key));
     if (!parsed.success) continue;
     if (new Date(parsed.data.expiresAt).getTime() <= Date.now()) {
-      await store.delete(key);
+      await forgetWorkspaceMediaSession(store, parsed.data);
       continue;
     }
     return parsed.data;
@@ -176,10 +328,17 @@ export async function forgetWorkspaceMediaSession(
   store: PluginDataStore,
   session: StoredWorkspaceMediaSession
 ): Promise<void> {
-  await Promise.all([
-    store.delete(exactSessionKey(session.actorIdentityId, session.originatingChatId)),
-    store.delete(actorSessionKey(session.actorIdentityId))
-  ]);
+  await Promise.all(workspaceSessionRouteChatIds(session).map((chatId) =>
+    store.delete(exactSessionKey(session.actorIdentityId, chatId))
+  ).concat(store.delete(actorSessionKey(session.actorIdentityId))));
+}
+
+export function workspaceSessionRouteChatIds(session: StoredWorkspaceMediaSession): string[] {
+  return [...new Set(session.schemaVersion === 1
+    ? [session.originatingChatId]
+    : [session.origin.chatId, session.actorPrivateChatId, session.mediaChatId].filter(
+        (value): value is string => Boolean(value)
+      ))];
 }
 
 function exactSessionKey(actorIdentityId: string, chatId: string): string {

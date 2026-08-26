@@ -15,11 +15,15 @@ export const workspaceConnectorMessages = {
   'official.workspace-connector.status': 'enabled={enabled}\nconfigured={configured}\ninstallation={installation}',
   'official.workspace-connector.unavailable': 'The Workspace is temporarily unavailable.',
   'official.workspace-connector.disabled': 'The Workspace connector is disabled for this scope.',
+  'official.workspace-connector.scopeUnavailable': 'No eligible managed scope is available for this Workspace request.',
   'official.workspace-connector.unknownCapability': 'That capability is not published or allowed for this scope.',
   'official.workspace-connector.usage': 'Usage: /workspace <capability> [arguments]',
   'official.workspace-connector.invalidChoice': 'Reply with one of the numbered choices shown for the active Workspace request.',
   'official.workspace-connector.mediaRejected': 'This file type is not accepted by the active Workspace request.',
   'official.workspace-connector.mediaTooLarge': 'This file is larger than the active Workspace request allows.',
   'official.workspace-connector.mediaLimitReached': 'The active Workspace request has already received the maximum number of files.',
-  'official.workspace-connector.mediaUnavailable': 'The Workspace could not accept this file. Please try again.'
+  'official.workspace-connector.mediaUnavailable': 'The Workspace could not accept this file. Please try again.',
+  'official.workspace-connector.sendAsAcceptedKind': 'Send this file as a document so its original quality and metadata are preserved.',
+  'official.workspace-connector.cancelled': 'The active Workspace request was cancelled and its staged files were removed.',
+  'official.workspace-connector.cancelFailed': 'The active Workspace request could not be cancelled. Try again.'
 } as const;

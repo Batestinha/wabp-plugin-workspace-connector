@@ -12,7 +12,21 @@ import {
   WorkspaceConnectorMediaUploadReceiptSchema,
   WorkspaceConnectorProjectionReceiptSchema,
   WorkspaceConnectorProjectionReplaceSchema,
+  WorkspaceConnectorScopeDirectoryReceiptV2Schema,
+  WorkspaceConnectorScopeDirectoryReplaceV2Schema,
+  WorkspaceConnectorAmbientEventV2Schema,
+  WorkspaceConnectorCatalogV2Schema,
+  WorkspaceConnectorDeliveryAckV2Schema,
+  WorkspaceConnectorDeliveryClaimResponseV2Schema,
+  WorkspaceConnectorDeliveryMediaGrantV2Schema,
+  WorkspaceConnectorInvocationResultV2Schema,
+  WorkspaceConnectorInvocationV2Schema,
+  WorkspaceConnectorMediaGrantRequestV2Schema,
+  WorkspaceConnectorMediaGrantV2Schema,
+  WorkspaceConnectorMediaUploadReceiptV2Schema,
+  WorkspaceConnectorSessionContinuationV2Schema,
   type WorkspaceConnectorCatalog,
+  type WorkspaceConnectorCatalogV2,
   type WorkspaceConnectorDeliveryAck,
   type WorkspaceConnectorDelivery,
   type WorkspaceConnectorInvocation,
@@ -23,7 +37,18 @@ import {
   type WorkspaceConnectorMediaGrantRequest,
   type WorkspaceConnectorMediaGrant,
   type WorkspaceConnectorProjectionReceipt,
-  type WorkspaceConnectorProjectionReplace
+  type WorkspaceConnectorProjectionReplace,
+  type WorkspaceConnectorAmbientEventV2,
+  type WorkspaceConnectorDeliveryAckV2,
+  type WorkspaceConnectorDeliveryMediaGrantV2,
+  type WorkspaceConnectorDeliveryV2,
+  type WorkspaceConnectorInvocationResultV2,
+  type WorkspaceConnectorInvocationV2,
+  type WorkspaceConnectorMediaGrantRequestV2,
+  type WorkspaceConnectorMediaGrantV2,
+  type WorkspaceConnectorScopeDirectoryReceiptV2,
+  type WorkspaceConnectorScopeDirectoryReplaceV2,
+  type WorkspaceConnectorSessionContinuationV2
 } from '../../../../packages/workspace-connector-contracts/src';
 import {
   OidcClientCredentialsTokenProvider,
@@ -59,10 +84,27 @@ export class WorkspaceConnectorClient {
     }, WorkspaceConnectorCatalogSchema);
   }
 
+  catalogV2(signal?: AbortSignal): Promise<WorkspaceConnectorCatalogV2> {
+    return this.#request('/v1/workspace-connector/v2/catalog', {
+      method: 'GET', ...(signal ? { signal } : {})
+    }, WorkspaceConnectorCatalogV2Schema);
+  }
+
   invoke(input: WorkspaceConnectorInvocation, signal?: AbortSignal): Promise<WorkspaceConnectorInvocationResult> {
     return this.#request('/v1/workspace-connector/v1/invocations', {
       method: 'POST', body: JSON.stringify(WorkspaceConnectorInvocationSchema.parse(input)), ...(signal ? { signal } : {})
     }, WorkspaceConnectorInvocationResultSchema);
+  }
+
+  invokeV2(
+    input: WorkspaceConnectorInvocationV2,
+    signal?: AbortSignal
+  ): Promise<WorkspaceConnectorInvocationResultV2> {
+    return this.#request('/v1/workspace-connector/v2/invocations', {
+      method: 'POST',
+      body: JSON.stringify(WorkspaceConnectorInvocationV2Schema.parse(input)),
+      ...(signal ? { signal } : {})
+    }, WorkspaceConnectorInvocationResultV2Schema);
   }
 
   continueSession(
@@ -81,6 +123,44 @@ export class WorkspaceConnectorClient {
     );
   }
 
+  continueSessionV2(
+    input: WorkspaceConnectorSessionContinuationV2,
+    signal?: AbortSignal
+  ): Promise<WorkspaceConnectorInvocationResultV2> {
+    const parsed = WorkspaceConnectorSessionContinuationV2Schema.parse(input);
+    return this.#request(
+      `/v1/workspace-connector/v2/sessions/${encodeURIComponent(parsed.sessionId)}/continue`,
+      {
+        method: 'POST',
+        body: JSON.stringify(parsed),
+        ...(signal ? { signal } : {})
+      },
+      WorkspaceConnectorInvocationResultV2Schema
+    );
+  }
+
+  publishAmbientEventV2(
+    input: WorkspaceConnectorAmbientEventV2,
+    signal?: AbortSignal
+  ): Promise<WorkspaceConnectorInvocationResultV2> {
+    return this.#request('/v1/workspace-connector/v2/events', {
+      method: 'POST',
+      body: JSON.stringify(WorkspaceConnectorAmbientEventV2Schema.parse(input)),
+      ...(signal ? { signal } : {})
+    }, WorkspaceConnectorInvocationResultV2Schema);
+  }
+
+  replaceScopeDirectoryV2(
+    input: WorkspaceConnectorScopeDirectoryReplaceV2,
+    signal?: AbortSignal
+  ): Promise<WorkspaceConnectorScopeDirectoryReceiptV2> {
+    return this.#request('/v1/workspace-connector/v2/scope-directory', {
+      method: 'POST',
+      body: JSON.stringify(WorkspaceConnectorScopeDirectoryReplaceV2Schema.parse(input)),
+      ...(signal ? { signal } : {})
+    }, WorkspaceConnectorScopeDirectoryReceiptV2Schema);
+  }
+
   replaceProjection(input: WorkspaceConnectorProjectionReplace, signal?: AbortSignal): Promise<WorkspaceConnectorProjectionReceipt> {
     return this.#request('/v1/workspace-connector/v1/projections', {
       method: 'POST', body: JSON.stringify(WorkspaceConnectorProjectionReplaceSchema.parse(input)), ...(signal ? { signal } : {})
@@ -94,10 +174,27 @@ export class WorkspaceConnectorClient {
     return response.deliveries;
   }
 
+  async claimDeliveriesV2(limit = 20, signal?: AbortSignal): Promise<WorkspaceConnectorDeliveryV2[]> {
+    const response = await this.#request(
+      `/v1/workspace-connector/v2/deliveries?limit=${Math.max(1, Math.min(100, limit))}`,
+      { method: 'GET', ...(signal ? { signal } : {}) },
+      WorkspaceConnectorDeliveryClaimResponseV2Schema
+    );
+    return response.deliveries;
+  }
+
   async acknowledgeDelivery(input: WorkspaceConnectorDeliveryAck, signal?: AbortSignal): Promise<void> {
     await this.#requestEmpty('/v1/workspace-connector/v1/deliveries/ack', {
       method: 'POST',
       body: JSON.stringify(WorkspaceConnectorDeliveryAckSchema.parse(input)),
+      ...(signal ? { signal } : {})
+    });
+  }
+
+  async acknowledgeDeliveryV2(input: WorkspaceConnectorDeliveryAckV2, signal?: AbortSignal): Promise<void> {
+    await this.#requestEmpty('/v1/workspace-connector/v2/deliveries/ack', {
+      method: 'POST',
+      body: JSON.stringify(WorkspaceConnectorDeliveryAckV2Schema.parse(input)),
       ...(signal ? { signal } : {})
     });
   }
@@ -139,6 +236,17 @@ export class WorkspaceConnectorClient {
     }, WorkspaceConnectorMediaGrantSchema);
   }
 
+  requestMediaGrantV2(
+    input: WorkspaceConnectorMediaGrantRequestV2,
+    signal?: AbortSignal
+  ): Promise<WorkspaceConnectorMediaGrantV2> {
+    return this.#request('/v1/workspace-connector/v2/media-grants', {
+      method: 'POST',
+      body: JSON.stringify(WorkspaceConnectorMediaGrantRequestV2Schema.parse(input)),
+      ...(signal ? { signal } : {})
+    }, WorkspaceConnectorMediaGrantV2Schema);
+  }
+
   uploadGrantedMedia(
     grantInput: WorkspaceConnectorMediaGrant,
     body: Buffer | ReadableStream<Uint8Array>,
@@ -169,6 +277,69 @@ export class WorkspaceConnectorClient {
       timeoutMs: MEDIA_UPLOAD_TIMEOUT_MS,
       ...(signal ? { signal } : {})
     }, WorkspaceConnectorMediaUploadReceiptSchema);
+  }
+
+  uploadGrantedMediaV2(
+    grantInput: WorkspaceConnectorMediaGrantV2,
+    body: Buffer | ReadableStream<Uint8Array>,
+    signal?: AbortSignal
+  ) {
+    const grant = WorkspaceConnectorMediaGrantV2Schema.parse(grantInput);
+    this.#assertTrustedMediaGrantUrl(grant.uploadUrl, grant.grantId, 2);
+    if (Buffer.isBuffer(body) && body.byteLength !== grant.sizeBytes) {
+      throw new Error('Workspace media bytes did not match their exact grant.');
+    }
+    const uploadBody = Buffer.isBuffer(body) ? Uint8Array.from(body).buffer : body;
+    return this.#requestAbsolute(grant.uploadUrl, {
+      method: 'PUT',
+      body: uploadBody,
+      headers: {
+        'content-type': 'application/octet-stream',
+        'content-length': String(grant.sizeBytes),
+        'x-workspace-media-capability': grant.bearerToken
+      },
+      timeoutMs: MEDIA_UPLOAD_TIMEOUT_MS,
+      ...(signal ? { signal } : {})
+    }, WorkspaceConnectorMediaUploadReceiptV2Schema);
+  }
+
+  async downloadGrantedMediaV2(
+    grantInput: WorkspaceConnectorDeliveryMediaGrantV2,
+    signal?: AbortSignal
+  ): Promise<Response> {
+    const grant = WorkspaceConnectorDeliveryMediaGrantV2Schema.parse(grantInput);
+    this.#assertTrustedMediaGrantUrl(grant.downloadUrl, grant.grantId, 2);
+    const response = await this.#fetch(grant.downloadUrl, {
+      method: 'GET',
+      redirect: 'error',
+      headers: {
+        accept: 'application/octet-stream',
+        'x-workspace-media-capability': grant.bearerToken
+      },
+      ...(signal ? { signal } : {})
+    });
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error(`Workspace media download was rejected with HTTP ${response.status}.`);
+    }
+    const contentLength = response.headers.get('content-length');
+    if (contentLength !== null && contentLength !== String(grant.sizeBytes)) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error('Workspace media download length did not match its grant.');
+    }
+    return response;
+  }
+
+  #assertTrustedMediaGrantUrl(url: string, grantId: string, protocolVersion: 1 | 2): void {
+    const grantUrl = new URL(url);
+    const base = new URL(this.#connection.baseUrl);
+    if (
+      grantUrl.origin !== base.origin || grantUrl.username || grantUrl.password
+      || grantUrl.search || grantUrl.hash
+      || grantUrl.pathname !== `/v1/workspace-connector/v${protocolVersion}/media-grants/${encodeURIComponent(grantId)}`
+    ) {
+      throw new Error('Workspace media grant returned an untrusted URL.');
+    }
   }
 
   async #request<T>(
