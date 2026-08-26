@@ -376,21 +376,25 @@ function canonicalPhone(phoneNumber: string): string {
 }
 
 export function renderWorkspaceActions(actions: Array<
+  | { kind: 'noop' }
   | { kind: 'reply' | 'complete' | 'denied'; text: string }
   | { kind: 'open_url'; text: string; url: string }
   | { kind: 'choice'; prompt: string; choices: Array<{ id: string; label: string }> }
   | { kind: 'request_media'; prompt: string }
 >): string {
-  return actions.map((action) => renderWorkspaceAction(action)).join('\n\n');
+  return actions.map((action) => renderWorkspaceAction(action)).filter(Boolean).join('\n\n');
 }
 
 function renderWorkspaceAction(action:
+  | { kind: 'noop' }
   | { kind: 'reply' | 'complete' | 'denied'; text: string }
   | { kind: 'open_url'; text: string; url: string }
   | { kind: 'choice'; prompt: string; choices: Array<{ id: string; label: string }> }
   | { kind: 'request_media'; prompt: string }
 ): string {
   switch (action.kind) {
+    case 'noop':
+      return '';
     case 'reply':
     case 'complete':
     case 'denied':
@@ -418,6 +422,7 @@ export async function workspaceActionsToPluginActionsV2(
 ): Promise<PluginAction[]> {
   const resolved: PluginAction[] = [];
   for (const action of actions) {
+    if (action.kind === 'noop') continue;
     const chatId = await resolveWorkspaceActionRouteV2(context, action.route, routeContext);
     const privateFallback = action.route.kind === 'actor_private'
       && action.route.fallback !== 'none'
@@ -444,7 +449,7 @@ export async function workspaceActionsToPluginActionsV2(
 
 export async function resolveWorkspaceActionRouteV2(
   context: Pick<PluginCommandContext, 'coveredGroupsForScope'>,
-  route: WorkspaceConnectorActionV2['route'],
+  route: Exclude<WorkspaceConnectorActionV2, { kind: 'noop' }>['route'],
   input: {
     originChatId: string;
     currentChatId: string;
