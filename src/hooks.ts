@@ -62,9 +62,13 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
     }
   };
 
-  void poll();
-  const timer = setInterval(() => void poll(), DELIVERY_POLL_INTERVAL_MS);
-  timer.unref();
+  const timer = context.config.WORKSPACE_CONNECTOR_DELIVERY_POLL_ENABLED
+    ? setInterval(() => void poll(), DELIVERY_POLL_INTERVAL_MS)
+    : undefined;
+  if (timer) {
+    void poll();
+    timer.unref();
+  }
 
   return {
     async resolvePrivateMessageRoute(envelope) {
@@ -83,7 +87,7 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
     },
     onShutdown() {
       stopped = true;
-      clearInterval(timer);
+      if (timer) clearInterval(timer);
     }
   };
 }
