@@ -13,7 +13,7 @@ export const WORKSPACE_CONNECTOR_AMBIENT_JOB = 'workspace-connector.ambient-even
 export const workspaceConnectorManifest: PluginManifest = {
   pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID,
   kind: 'managed_group',
-  version: '0.4.0',
+  version: '0.5.0',
   coreApiRange: '>=0.2.0',
   messageNamespace: 'official.workspace-connector',
   descriptionKey: 'official.workspace-connector.description',
@@ -47,7 +47,7 @@ export const workspaceConnectorManifest: PluginManifest = {
       availability: { invocation: 'either' }
     }]
   },
-  eventSubscriptions: ['message', 'private.message', 'group.scope.covered', 'plugin.job'],
+  eventSubscriptions: ['message', 'private.message', 'participant.change', 'group.scope.covered', 'plugin.job'],
   services: [{
     serviceId: WORKSPACE_CONNECTOR_PROJECTION_SERVICE_ID,
     description: 'Publish an idempotent, generation-fenced projection to the configured Workspace.',

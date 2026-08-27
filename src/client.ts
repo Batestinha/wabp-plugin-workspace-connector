@@ -14,6 +14,8 @@ import {
   WorkspaceConnectorProjectionReplaceSchema,
   WorkspaceConnectorScopeDirectoryReceiptV2Schema,
   WorkspaceConnectorScopeDirectoryReplaceV2Schema,
+  WorkspaceScopeMembershipReceiptV1Schema,
+  WorkspaceScopeMembershipReplaceV1Schema,
   WorkspaceConnectorAmbientEventV2Schema,
   WorkspaceConnectorCatalogV2Schema,
   WorkspaceConnectorDeliveryAckV2Schema,
@@ -48,6 +50,8 @@ import {
   type WorkspaceConnectorMediaGrantV2,
   type WorkspaceConnectorScopeDirectoryReceiptV2,
   type WorkspaceConnectorScopeDirectoryReplaceV2,
+  type WorkspaceScopeMembershipReceiptV1,
+  type WorkspaceScopeMembershipReplaceV1,
   type WorkspaceConnectorSessionContinuationV2
 } from '../../../../packages/workspace-connector-contracts/src';
 import {
@@ -159,6 +163,17 @@ export class WorkspaceConnectorClient {
       body: JSON.stringify(WorkspaceConnectorScopeDirectoryReplaceV2Schema.parse(input)),
       ...(signal ? { signal } : {})
     }, WorkspaceConnectorScopeDirectoryReceiptV2Schema);
+  }
+
+  replaceScopeMembershipsV1(
+    input: WorkspaceScopeMembershipReplaceV1,
+    signal?: AbortSignal
+  ): Promise<WorkspaceScopeMembershipReceiptV1> {
+    return this.#request('/v1/workspace-connector/v2/scope-memberships', {
+      method: 'POST',
+      body: JSON.stringify(WorkspaceScopeMembershipReplaceV1Schema.parse(input)),
+      ...(signal ? { signal } : {})
+    }, WorkspaceScopeMembershipReceiptV1Schema);
   }
 
   replaceProjection(input: WorkspaceConnectorProjectionReplace, signal?: AbortSignal): Promise<WorkspaceConnectorProjectionReceipt> {

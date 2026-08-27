@@ -57,6 +57,7 @@ import {
   type WorkspaceMediaRetry
 } from './mediaRetries';
 import { refreshWorkspaceScopeDirectory } from './scopeDirectory';
+import { refreshWorkspaceScopeMemberships } from './scopeMembershipDirectory';
 
 const DELIVERY_POLL_INTERVAL_MS = 15_000;
 const SCOPE_DIRECTORY_REFRESH_INTERVAL_MS = 60_000;
@@ -107,6 +108,22 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
     return scopeDirectoryRefresh;
   };
 
+  let scopeMembershipRefresh: Promise<void> | undefined;
+  const refreshScopeMemberships = (): Promise<void> => {
+    if (scopeMembershipRefresh) return scopeMembershipRefresh;
+    scopeMembershipRefresh = (async () => {
+      if (!await workspaceV2IsInstalled(context)) return;
+      await refreshWorkspaceScopeMemberships(context, client, connection.installationId);
+    })()
+      .catch((error) => {
+        context.logger.warn({ error }, 'Workspace v1 scope-membership refresh failed');
+      })
+      .finally(() => {
+        scopeMembershipRefresh = undefined;
+      });
+    return scopeMembershipRefresh;
+  };
+
   const poll = async (): Promise<void> => {
     if (polling || stopped) return;
     polling = true;
@@ -143,11 +160,15 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
     timer.unref();
   }
   const scopeDirectoryTimer = setInterval(
-    () => void refreshScopeDirectory(),
+    () => {
+      void refreshScopeDirectory();
+      void refreshScopeMemberships();
+    },
     SCOPE_DIRECTORY_REFRESH_INTERVAL_MS
   );
   scopeDirectoryTimer.unref();
   void refreshScopeDirectory();
+  void refreshScopeMemberships();
 
   return {
     async resolvePrivateMessageRoute(envelope) {
@@ -175,7 +196,10 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
       return enqueueWorkspaceAmbientEvent(context, connection.installationId, event);
     },
     async onGroupScopeCovered() {
-      await refreshScopeDirectory();
+      await Promise.all([refreshScopeDirectory(), refreshScopeMemberships()]);
+    },
+    async onParticipantChange() {
+      await refreshScopeMemberships();
     },
     async onPluginJob(job) {
       if (job.jobName === WORKSPACE_CONNECTOR_SESSION_TIMER_JOB) {
