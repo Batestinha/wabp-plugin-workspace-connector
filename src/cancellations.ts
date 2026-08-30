@@ -5,14 +5,22 @@ import type {
 import { WorkspaceConnectorClient } from './client';
 import { renderWorkspaceActions } from './commands';
 import { workspaceConnectorConnection } from './config';
-import { findWorkspaceMediaSession, forgetWorkspaceMediaSession } from './mediaSessions';
+import {
+  findWorkspaceMediaSession,
+  forgetWorkspaceMediaSession,
+  workspaceSessionContinuationCapabilityId
+} from './mediaSessions';
 import {
   deleteWorkspaceMediaRetry,
   workspaceMediaRetriesForSession
 } from './mediaRetries';
 
+type WorkspaceCancellationClient = Pick<WorkspaceConnectorClient, 'continueSessionV2'>;
+
 export function registerWorkspaceConnectorCancellations(
-  context: PluginCommandContext
+  context: PluginCommandContext,
+  clientFactory: (connection: ConstructorParameters<typeof WorkspaceConnectorClient>[0]) => WorkspaceCancellationClient =
+    (connection) => new WorkspaceConnectorClient(connection)
 ): PluginCancellationRegistration[] {
   return [{
     workflowId: 'workspace-remote-session',
@@ -35,13 +43,13 @@ export function registerWorkspaceConnectorCancellations(
         };
       }
       try {
-        const result = await new WorkspaceConnectorClient(connection).continueSessionV2({
+        const result = await clientFactory(connection).continueSessionV2({
           protocolVersion: 2,
           installationId: connection.installationId,
           catalogRevision: session.catalogRevision,
           catalogDigestSha256: session.catalogDigestSha256,
           sessionId: session.sessionId,
-          capabilityId: session.capabilityId,
+          capabilityId: workspaceSessionContinuationCapabilityId(session),
           scopeId: session.scopeId,
           origin: session.origin,
           current: {

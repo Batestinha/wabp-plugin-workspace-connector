@@ -80,7 +80,7 @@ export async function registerWorkspaceConnectorCommands(context: PluginCommandC
       if (!alias || (!privateInvocation && !scoped.allowedCapabilities.includes(alias.capabilityId))) {
         return { handled: true, text: ctx.t('official.workspace-connector.unknownCapability') };
       }
-      return invokeWorkspaceAliasV1(context, runtime, ctx, catalog, alias, client);
+      return await invokeWorkspaceAliasV1(context, runtime, ctx, catalog, alias, client);
     } catch {
       return { handled: true, text: ctx.t('official.workspace-connector.unavailable') };
     }
@@ -164,7 +164,7 @@ async function invokeCurrentAliasV1(
     const catalog = await client.catalog(ctx.signal);
     const alias = catalog.aliases.find((candidate) => candidate.namespace === namespace);
     return alias
-      ? invokeWorkspaceAliasV1(context, runtime, ctx, catalog, alias, client)
+      ? await invokeWorkspaceAliasV1(context, runtime, ctx, catalog, alias, client)
       : { handled: true, text: ctx.t('official.workspace-connector.unknownCapability') };
   } catch {
     return { handled: true, text: ctx.t('official.workspace-connector.unavailable') };
@@ -185,7 +185,7 @@ async function invokeCurrentAliasV2(
     assertV2CatalogDigest(catalog);
     const alias = catalog.aliases.find((candidate) => candidate.namespace === namespace);
     return alias
-      ? invokeWorkspaceAliasV2(context, runtime, ctx, catalog, alias, client)
+      ? await invokeWorkspaceAliasV2(context, runtime, ctx, catalog, alias, client)
       : { handled: true, text: ctx.t('official.workspace-connector.unknownCapability') };
   } catch {
     return { handled: true, text: ctx.t('official.workspace-connector.unavailable') };
@@ -343,6 +343,10 @@ async function invokeWorkspaceAliasV2(
       capabilityId: alias.capabilityId,
       catalogRevision: catalog.revision,
       catalogDigestSha256: catalog.digestSha256,
+      authenticatedInteractiveCapabilityIds: catalog.capabilities
+        .filter((capability) => capability.interfaces.includes('interactive'))
+        .map((capability) => capability.capabilityId),
+      scopeAllowedCapabilityIds: scoped.allowedCapabilities,
       locale: ctx.locale,
       ...(mediaChatId ? { mediaChatId } : {})
     });

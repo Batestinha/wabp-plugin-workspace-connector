@@ -44,6 +44,7 @@ import {
   rememberWorkspaceSession,
   rememberWorkspaceSessionV2,
   reserveWorkspaceMediaFile,
+  workspaceSessionContinuationCapabilityId,
   type StoredWorkspaceMediaSession,
   type StoredWorkspaceSessionV2
 } from './mediaSessions';
@@ -315,7 +316,7 @@ async function handleWorkspaceSessionMessageV2(
       catalogRevision: session.catalogRevision,
       catalogDigestSha256: session.catalogDigestSha256,
       sessionId: session.sessionId,
-      capabilityId: session.capabilityId,
+      capabilityId: workspaceSessionContinuationCapabilityId(session),
       scopeId: session.scopeId,
       origin: session.origin,
       current: {
@@ -329,7 +330,7 @@ async function handleWorkspaceSessionMessageV2(
       actor: session.actor,
       input: choiceId ? { kind: 'choice', choiceId } : { kind: 'text', text: body }
     });
-    return applyWorkspaceResultV2(context, event, session, result);
+    return await applyWorkspaceResultV2(context, event, session, result);
   } catch (error) {
     context.logger.warn({ error, sessionId: session.sessionId }, 'Workspace v2 session continuation failed');
     return [await reply(context, event, 'official.workspace-connector.unavailable')];
@@ -671,7 +672,7 @@ async function handleMediaMessageV2(
   const fileId = mediaFileId(activeSession.sessionId, event.message.id);
   let retry = newWorkspaceMediaRetryV2({
     sessionId: activeSession.sessionId,
-    capabilityId: activeSession.capabilityId,
+    capabilityId: workspaceSessionContinuationCapabilityId(activeSession),
     fileId,
     mediaId: staged.id,
     responseChatId: event.message.chatId,
@@ -952,7 +953,7 @@ async function handleWorkspaceAmbientJob(
   }
 }
 
-async function handleWorkspaceSessionTimer(
+export async function handleWorkspaceSessionTimer(
   context: PluginRuntimeContext,
   client: WorkspaceSessionClient,
   installationId: string,
@@ -973,7 +974,7 @@ async function handleWorkspaceSessionTimer(
     catalogRevision: session.catalogRevision,
     catalogDigestSha256: session.catalogDigestSha256,
     sessionId: session.sessionId,
-    capabilityId: session.capabilityId,
+    capabilityId: workspaceSessionContinuationCapabilityId(session),
     scopeId: session.scopeId,
     origin: session.origin,
     current: session.origin,

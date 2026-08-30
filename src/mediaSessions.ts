@@ -42,6 +42,13 @@ const storedSessionV2Schema = z.object({
   schemaVersion: z.literal(2),
   sessionId: z.string().min(1).max(512),
   capabilityId: z.string().min(1).max(160),
+  continuationCapabilityId: z.string().min(1).max(160).optional(),
+  authenticatedInteractiveCapabilityIds: z.array(z.string().min(1).max(160)).max(128)
+    .refine((value) => new Set(value).size === value.length, { message: 'interactive capability IDs must be unique' })
+    .optional(),
+  scopeAllowedCapabilityIds: z.array(z.string().min(1).max(160)).max(128)
+    .refine((value) => new Set(value).size === value.length, { message: 'allowed capability IDs must be unique' })
+    .optional(),
   catalogRevision: z.number().int().nonnegative(),
   catalogDigestSha256: z.string().regex(/^[a-f0-9]{64}$/),
   expiresAt: z.string().datetime(),
@@ -168,6 +175,8 @@ export async function rememberWorkspaceSessionV2(input: {
   capabilityId: string;
   catalogRevision: number;
   catalogDigestSha256: string;
+  authenticatedInteractiveCapabilityIds?: readonly string[] | undefined;
+  scopeAllowedCapabilityIds?: readonly string[] | undefined;
   locale: string;
   mediaChatId?: string | undefined;
   previousSession?: StoredWorkspaceMediaSession | undefined;
@@ -177,10 +186,30 @@ export async function rememberWorkspaceSessionV2(input: {
   const choice = input.result.actions.find((action) => action.kind === 'choice');
   const previousV2 = input.previousSession?.schemaVersion === 2 ? input.previousSession : undefined;
   const sameSession = previousV2?.sessionId === input.result.session.sessionId;
+  const authenticatedInteractiveCapabilityIds = immutableCapabilitySnapshot(
+    'authenticated interactive capabilities',
+    input.authenticatedInteractiveCapabilityIds,
+    previousV2?.authenticatedInteractiveCapabilityIds
+  );
+  const scopeAllowedCapabilityIds = immutableCapabilitySnapshot(
+    'scope-allowed capabilities',
+    input.scopeAllowedCapabilityIds,
+    previousV2?.scopeAllowedCapabilityIds
+  );
+  const continuationCapabilityId = lockedContinuationCapabilityId({
+    originatingCapabilityId: input.capabilityId,
+    requestedCapabilityId: input.result.session.continuationCapabilityId,
+    lockedCapabilityId: previousV2?.continuationCapabilityId,
+    authenticatedInteractiveCapabilityIds,
+    scopeAllowedCapabilityIds
+  });
   const parsed = storedSessionSchema.parse({
     schemaVersion: 2,
     sessionId: input.result.session.sessionId,
     capabilityId: input.capabilityId,
+    ...(continuationCapabilityId ? { continuationCapabilityId } : {}),
+    ...(authenticatedInteractiveCapabilityIds ? { authenticatedInteractiveCapabilityIds } : {}),
+    ...(scopeAllowedCapabilityIds ? { scopeAllowedCapabilityIds } : {}),
     catalogRevision: input.catalogRevision,
     catalogDigestSha256: input.catalogDigestSha256,
     expiresAt: input.result.session.expiresAt,
@@ -339,6 +368,62 @@ export function workspaceSessionRouteChatIds(session: StoredWorkspaceMediaSessio
     : [session.origin.chatId, session.actorPrivateChatId, session.mediaChatId].filter(
         (value): value is string => Boolean(value)
       ))];
+}
+
+export function workspaceSessionContinuationCapabilityId(session: StoredWorkspaceSessionV2): string {
+  return session.continuationCapabilityId ?? session.capabilityId;
+}
+
+function immutableCapabilitySnapshot(
+  label: string,
+  incoming: readonly string[] | undefined,
+  existing: readonly string[] | undefined
+): string[] | undefined {
+  const normalizedIncoming = incoming
+    ? [...new Set(incoming.map((value) => value.trim()).filter(Boolean))].sort()
+    : undefined;
+  const normalizedExisting = existing ? [...existing].sort() : undefined;
+  if (
+    normalizedIncoming
+    && normalizedExisting
+    && JSON.stringify(normalizedIncoming) !== JSON.stringify(normalizedExisting)
+  ) {
+    throw new Error(`Workspace session ${label} changed after creation.`);
+  }
+  return normalizedExisting ?? normalizedIncoming;
+}
+
+function lockedContinuationCapabilityId(input: {
+  originatingCapabilityId: string;
+  requestedCapabilityId?: string | undefined;
+  lockedCapabilityId?: string | undefined;
+  authenticatedInteractiveCapabilityIds?: readonly string[] | undefined;
+  scopeAllowedCapabilityIds?: readonly string[] | undefined;
+}): string | undefined {
+  if (
+    input.lockedCapabilityId
+    && input.requestedCapabilityId
+    && input.lockedCapabilityId !== input.requestedCapabilityId
+  ) {
+    throw new Error('Workspace session continuation capability changed after it was locked.');
+  }
+  const candidate = input.lockedCapabilityId ?? input.requestedCapabilityId;
+  if (!candidate) return undefined;
+  const interactiveCapabilityIds = input.authenticatedInteractiveCapabilityIds;
+  const allowedCapabilityIds = input.scopeAllowedCapabilityIds;
+  if (
+    !interactiveCapabilityIds?.includes(candidate)
+    || !allowedCapabilityIds?.includes(candidate)
+  ) {
+    throw new Error('Workspace session continuation capability is not interactive and allowed in the authenticated catalog scope.');
+  }
+  if (
+    !interactiveCapabilityIds.includes(input.originatingCapabilityId)
+    || !allowedCapabilityIds.includes(input.originatingCapabilityId)
+  ) {
+    throw new Error('Workspace session originating capability is not bound to the authenticated catalog scope.');
+  }
+  return candidate;
 }
 
 function exactSessionKey(actorIdentityId: string, chatId: string): string {
