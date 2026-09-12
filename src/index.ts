@@ -1,4 +1,4 @@
-import type { BotPlugin } from '../../../platform/pluginRuntime/types';
+import type { BotPlugin } from './runtime';
 import { registerWorkspaceConnectorCommands } from './commands';
 import { workspaceConnectorManifest } from './manifest';
 import { createWorkspaceConnectorHooks } from './hooks';

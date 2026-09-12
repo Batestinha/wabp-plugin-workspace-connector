@@ -1,7 +1,5 @@
-import type {
-  PluginCancellationRegistration,
-  PluginCommandContext
-} from '../../../platform/pluginRuntime/types';
+import type { PluginCancellationRegistration } from '../../../../packages/plugin-sdk/src/cancellations';
+import type { PluginCommandContext } from './runtime';
 import { WorkspaceConnectorClient } from './client';
 import { renderWorkspaceActions } from './commands';
 import { workspaceConnectorConnection } from './config';

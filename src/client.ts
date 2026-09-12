@@ -53,11 +53,11 @@ import {
   type WorkspaceScopeMembershipReceiptV1,
   type WorkspaceScopeMembershipReplaceV1,
   type WorkspaceConnectorSessionContinuationV2
-} from '../../../../packages/workspace-connector-contracts/src';
+} from './contracts/workspace-connector-v0.3';
 import {
   OidcClientCredentialsTokenProvider,
   type ClientCredentialsTokenProvider
-} from '../../../platform/identity/clientCredentialsTokenProvider';
+} from '../../../../packages/plugin-sdk/src/client-credentials';
 import type { WorkspaceConnectorConnection } from './config';
 
 const MAX_JSON_BYTES = 2 * 1024 * 1024;

@@ -5,8 +5,8 @@ import {
   workspaceConnectorCanonicalJson,
   type WorkspaceScopeMembershipReceiptV1,
   type WorkspaceScopeMembershipReplaceV1
-} from '../../../../packages/workspace-connector-contracts/src';
-import type { PluginRuntimeContext } from '../../../platform/pluginRuntime/runtime/pluginRuntimeContext';
+} from './contracts/workspace-connector-v0.3';
+import type { PluginRuntimeContext } from './runtime';
 
 const SCOPE_MEMBERSHIP_STATE_KEY = 'scope-memberships:v1';
 const MEMBERSHIP_HEARTBEAT_MS = 2 * 60_000;

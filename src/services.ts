@@ -1,5 +1,5 @@
-import type { PluginServiceRegistration } from '../../../platform/pluginRuntime/pluginServices';
-import type { PluginServiceRegistrationContext } from '../../../platform/pluginRuntime/types';
+import type { PluginServiceRegistration } from '../../../../packages/plugin-sdk/src/services';
+import type { PluginServiceRegistrationContext } from './runtime';
 import { WorkspaceConnectorClient } from './client';
 import { parseWorkspaceConnectorConfig, workspaceConnectorConnection } from './config';
 import {

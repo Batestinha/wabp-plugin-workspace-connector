@@ -9,8 +9,8 @@ import {
   type WorkspaceConnectorActionV2,
   type WorkspaceConnectorInvocationResult,
   type WorkspaceConnectorInvocationResultV2
-} from '../../../../packages/workspace-connector-contracts/src';
-import type { PluginDataStore } from '../../../platform/pluginRuntime/manager/pluginDataStore';
+} from './contracts/workspace-connector-v0.3';
+import type { PluginDataStore } from '../../../../packages/plugin-sdk/src/data-store';
 
 const choiceSchema = z.object({
   id: z.string().trim().min(1).max(512),

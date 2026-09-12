@@ -4,8 +4,8 @@ import {
   WorkspaceConnectorMediaUploadMetadataV2Schema,
   type WorkspaceConnectorMediaUploadMetadata,
   type WorkspaceConnectorMediaUploadMetadataV2
-} from '../../../../packages/workspace-connector-contracts/src';
-import type { PluginDataStore } from '../../../platform/pluginRuntime/manager/pluginDataStore';
+} from './contracts/workspace-connector-v0.3';
+import type { PluginDataStore } from '../../../../packages/plugin-sdk/src/data-store';
 
 const RETRY_PREFIX = 'media-retry:v1:';
 

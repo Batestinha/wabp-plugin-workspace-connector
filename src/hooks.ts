@@ -15,15 +15,11 @@ import {
   type WorkspaceConnectorDeliveryAck,
   type WorkspaceConnectorDeliveryAckV2,
   type WorkspaceConnectorDeliveryV2
-} from '../../../../packages/workspace-connector-contracts/src';
-import type { PluginAction } from '../../../platform/pluginRuntime/runtime/pluginActionTypes';
-import type { PluginRuntimeContext } from '../../../platform/pluginRuntime/runtime/pluginRuntimeContext';
-import { enqueuePluginJob } from '../../../platform/jobs/queue';
-import type {
-  PluginJobEvent,
-  PluginMessageEvent,
-  PluginRuntimeHooks
-} from '../../../platform/pluginRuntime/types';
+} from './contracts/workspace-connector-v0.3';
+import type { PluginAction } from '../../../../packages/plugin-sdk/src/actions';
+import type { PluginRuntimeContext } from './runtime';
+import { enqueuePluginJob } from '../../../../packages/plugin-sdk/src/jobs';
+import type { PluginJobEvent, PluginMessageEvent, PluginRuntimeHooks } from '../../../../packages/plugin-sdk/src/hooks';
 import { WorkspaceConnectorClient } from './client';
 import {
   renderWorkspaceActions,
@@ -341,7 +337,7 @@ async function applyWorkspaceResultV2(
   context: PluginRuntimeContext,
   event: PluginMessageEvent,
   session: StoredWorkspaceSessionV2,
-  result: import('../../../../packages/workspace-connector-contracts/src').WorkspaceConnectorInvocationResultV2
+  result: import('./contracts/workspace-connector-v0.3').WorkspaceConnectorInvocationResultV2
 ): Promise<PluginAction[]> {
   const request = result.actions.find((action) => action.kind === 'request_media');
   const mediaChatId = request
@@ -792,7 +788,7 @@ async function retryStagedMedia(
         await executeRetryActions(context, session, retry.fileId, actions);
         if (receipt.timer && receipt.sessionState === 'accepting') {
           const timedSession = { ...session, timer: receipt.timer };
-          await enqueuePluginJob(context.queue, {
+          await enqueuePluginJob(context, {
             pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID,
             jobName: WORKSPACE_CONNECTOR_SESSION_TIMER_JOB,
             scopeId: session.scopeId,

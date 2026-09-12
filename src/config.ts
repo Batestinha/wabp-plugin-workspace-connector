@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { AppConfig } from '../../../platform/config/runtimeConfig';
 
 export const workspaceConnectorConfigSchema = z.object({
   enabled: z.boolean().default(false),
@@ -28,15 +27,7 @@ export function parseWorkspaceConnectorConfig(input: unknown): WorkspaceConnecto
 }
 
 export function workspaceConnectorConnection(
-  config: Pick<
-    AppConfig,
-    | 'WORKSPACE_CONNECTOR_BASE_URL'
-    | 'WORKSPACE_CONNECTOR_OIDC_ISSUER'
-    | 'WORKSPACE_CONNECTOR_OIDC_AUDIENCE'
-    | 'WORKSPACE_CONNECTOR_OIDC_CLIENT_ID'
-    | 'WORKSPACE_CONNECTOR_INSTALLATION_ID'
-    | 'workspaceConnectorOidcClientSecret'
-  >
+  config: WorkspaceConnectorDeploymentConfig
 ): WorkspaceConnectorConnection | undefined {
   const candidate = {
     baseUrl: canonicalHttpsBaseUrl(config.WORKSPACE_CONNECTOR_BASE_URL),
@@ -60,4 +51,14 @@ function canonicalHttpsBaseUrl(input: string | undefined): string {
     throw new Error('Workspace connector base URL must be a canonical HTTPS URL without credentials, query, or fragment.');
   }
   return value.endsWith('/') ? value.slice(0, -1) : value;
+}
+
+export interface WorkspaceConnectorDeploymentConfig {
+  WORKSPACE_CONNECTOR_BASE_URL?: string | undefined;
+  WORKSPACE_CONNECTOR_OIDC_ISSUER?: string | undefined;
+  WORKSPACE_CONNECTOR_OIDC_AUDIENCE?: string | undefined;
+  WORKSPACE_CONNECTOR_OIDC_CLIENT_ID?: string | undefined;
+  WORKSPACE_CONNECTOR_INSTALLATION_ID?: string | undefined;
+  WORKSPACE_CONNECTOR_DELIVERY_POLL_ENABLED?: boolean | undefined;
+  workspaceConnectorOidcClientSecret?: string | undefined;
 }

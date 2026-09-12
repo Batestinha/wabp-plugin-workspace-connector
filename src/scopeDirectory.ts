@@ -5,8 +5,8 @@ import {
   workspaceConnectorCanonicalJson,
   type WorkspaceConnectorScopeDirectoryReceiptV2,
   type WorkspaceConnectorScopeDirectoryReplaceV2
-} from '../../../../packages/workspace-connector-contracts/src';
-import type { PluginRuntimeContext } from '../../../platform/pluginRuntime/runtime/pluginRuntimeContext';
+} from './contracts/workspace-connector-v0.3';
+import type { PluginRuntimeContext } from './runtime';
 
 const SCOPE_DIRECTORY_STATE_KEY = 'scope-directory:v2';
 

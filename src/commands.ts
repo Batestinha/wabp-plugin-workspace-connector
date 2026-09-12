@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { CommandMetadata } from '../../../adminBot/router/commandMetadata';
-import type { CommandContext } from '../../../adminBot/router/commandRouter';
+import type { CommandMetadata } from '../../../../packages/plugin-sdk/src/command-metadata';
+import type { CommandContext } from '../../../../packages/plugin-sdk/src/commands';
 import {
   WorkspaceConnectorCatalogSchema,
   WorkspaceConnectorCatalogV2Schema,
@@ -11,11 +11,12 @@ import {
   type WorkspaceConnectorCommandAlias,
   type WorkspaceConnectorCommandAliasV2,
   type WorkspaceConnectorScopeEvidenceV2
-} from '../../../../packages/workspace-connector-contracts/src';
-import { requireStableIdentityAddress } from '../../../platform/identity/messageActor';
-import type { PluginAction } from '../../../platform/pluginRuntime/runtime/pluginActionTypes';
-import type { PluginCommandContext } from '../../../platform/pluginRuntime/types';
-import { requireOfficialCommandRuntime, requireScopeId } from '../shared';
+} from './contracts/workspace-connector-v0.3';
+import { requireStableIdentityAddress } from '../../../../packages/plugin-sdk/src/message-actor';
+import type { PluginAction } from '../../../../packages/plugin-sdk/src/actions';
+import type { PluginCommandContext } from './runtime';
+import { requireIntegrationCommandContext as requireOfficialCommandRuntime } from '../../../../packages/plugin-sdk/src/integration-plugin';
+import { requireScopeId } from '../../../../packages/plugin-sdk/src/commands';
 import { WorkspaceConnectorClient } from './client';
 import { parseWorkspaceConnectorConfig, workspaceConnectorConnection } from './config';
 import {

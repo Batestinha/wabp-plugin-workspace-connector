@@ -1,4 +1,4 @@
-import type { PluginManifest } from '../../../platform/pluginRuntime/manifest';
+import type { PluginManifest } from '../../../../packages/plugin-sdk/src/manifest';
 import { workspaceConnectorConfigSchema } from './config';
 import { workspaceConnectorMessages } from './messages';
 import {
@@ -13,8 +13,8 @@ export const WORKSPACE_CONNECTOR_AMBIENT_JOB = 'workspace-connector.ambient-even
 export const workspaceConnectorManifest: PluginManifest = {
   pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID,
   kind: 'managed_group',
-  version: '0.6.0',
-  coreApiRange: '>=0.2.0',
+  version: '0.6.1',
+  coreApiRange: '^0.3.0',
   messageNamespace: 'official.workspace-connector',
   descriptionKey: 'official.workspace-connector.description',
   defaultMessages: workspaceConnectorMessages,

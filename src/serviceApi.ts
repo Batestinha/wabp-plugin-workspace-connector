@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { WorkspaceConnectorProjectionReceiptSchema } from '../../../../packages/workspace-connector-contracts/src';
+import { WorkspaceConnectorProjectionReceiptSchema } from './contracts/workspace-connector-v0.3';
 
 export const WORKSPACE_CONNECTOR_PROJECTION_SERVICE_ID = 'official.workspace-connector.projection.v1';
 export const WORKSPACE_CONNECTOR_PROJECTION_REPLACE_METHOD = 'replace';
