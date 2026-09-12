@@ -1,5 +1,5 @@
-import { defineControl } from '../../../../packages/plugin-sdk/src/controls';
-import type { ControlDescriptor } from '../../../../packages/plugin-sdk/src/controls-types';
+import { defineControl } from '@wabs/plugin-sdk/controls';
+import type { ControlDescriptor } from '@wabs/plugin-sdk/controls-types';
 import { WORKSPACE_CONNECTOR_PLUGIN_ID } from './manifest';
 
 export const workspaceConnectorControls: ControlDescriptor[] = [

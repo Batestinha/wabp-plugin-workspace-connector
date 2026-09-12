@@ -57,7 +57,7 @@ import {
 import {
   OidcClientCredentialsTokenProvider,
   type ClientCredentialsTokenProvider
-} from '../../../../packages/plugin-sdk/src/client-credentials';
+} from '@wabs/plugin-sdk/client-credentials';
 import type { WorkspaceConnectorConnection } from './config';
 
 const MAX_JSON_BYTES = 2 * 1024 * 1024;

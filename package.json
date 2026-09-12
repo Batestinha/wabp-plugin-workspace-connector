@@ -1,0 +1,42 @@
+{
+  "name": "@wabs/plugin-workspace-connector",
+  "version": "0.6.1",
+  "description": "Connect managed WhatsApp scopes to capabilities declared by an external Workspace authority.",
+  "license": "MIT",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "wa-plugin.json",
+    "locales",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "provenance.json",
+    "package-lock.json",
+    "contracts"
+  ],
+  "bundledDependencies": [
+    "@wabs/plugin-sdk",
+    "zod"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test tests/*.test.cjs",
+    "release:archive": "npm run build && python scripts/package-release.py"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@wabs/plugin-sdk": "file:vendor/wabs-plugin-sdk-0.3.6-130a7a2bfc29.tgz",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.20",
+    "typescript": "5.9.3"
+  }
+}

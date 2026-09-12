@@ -1,4 +1,4 @@
-import type { PluginServiceRegistration } from '../../../../packages/plugin-sdk/src/services';
+import type { PluginServiceRegistration } from '@wabs/plugin-sdk/services';
 import type { PluginServiceRegistrationContext } from './runtime';
 import { WorkspaceConnectorClient } from './client';
 import { parseWorkspaceConnectorConfig, workspaceConnectorConnection } from './config';

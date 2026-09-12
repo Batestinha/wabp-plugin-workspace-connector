@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "contracts": [
+    {
+      "id": "workspace-connector.protocol.v1-v2",
+      "repository": "https://github.com/Batestinha/wabp",
+      "commit": "1c4d8cfbfad1082bff31a602fc45f5ce0b9f4050",
+      "path": "packages/workspace-connector-contracts/src/index.ts",
+      "upstreamSha256": "1ba03538c077aef198de4052be5294790811c7cf7f53a5d928e0a12a84bf0774",
+      "vendoredPath": "workspace-connector-v0.3.ts",
+      "vendoredSha256": "1ba03538c077aef198de4052be5294790811c7cf7f53a5d928e0a12a84bf0774",
+      "patches": [],
+      "license": "MIT",
+      "licenseFile": "LICENSE.workspace-connector",
+      "containsProviderImplementation": false
+    }
+  ]
+}

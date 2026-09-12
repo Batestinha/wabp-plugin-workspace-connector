@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "sourceRepository": "https://github.com/Batestinha/wabp",
+  "sourceCommit": "6118a774d8e1b0a7b13420b1b665c91c3c5a6617",
+  "sourceDirectory": "src/plugins/official/workspace-connector",
+  "sourceTreeSha": "447543d08d74bbbaf1761e24667582808d76cec3",
+  "extractedHistoryCommit": "ca35485e9c3188f626de410a05dc83145a4fe14f",
+  "sdk": {
+    "version": "0.3.6",
+    "path": "vendor/wabs-plugin-sdk-0.3.6-130a7a2bfc29.tgz",
+    "sha256": "130a7a2bfc29b83ff5bc3675614632f3f74588a0a22816e53bf11acade993487",
+    "sourceDirectory": "packages/plugin-sdk",
+    "sourceCommit": "6118a774d8e1b0a7b13420b1b665c91c3c5a6617"
+  },
+  "vendoredContracts": "contracts/provenance.json"
+}

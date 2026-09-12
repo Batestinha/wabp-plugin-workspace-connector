@@ -16,10 +16,10 @@ import {
   type WorkspaceConnectorDeliveryAckV2,
   type WorkspaceConnectorDeliveryV2
 } from './contracts/workspace-connector-v0.3';
-import type { PluginAction } from '../../../../packages/plugin-sdk/src/actions';
+import type { PluginAction } from '@wabs/plugin-sdk/actions';
 import type { PluginRuntimeContext } from './runtime';
-import { enqueuePluginJob } from '../../../../packages/plugin-sdk/src/jobs';
-import type { PluginJobEvent, PluginMessageEvent, PluginRuntimeHooks } from '../../../../packages/plugin-sdk/src/hooks';
+import { enqueuePluginJob } from '@wabs/plugin-sdk/jobs';
+import type { PluginJobEvent, PluginMessageEvent, PluginRuntimeHooks } from '@wabs/plugin-sdk/hooks';
 import { WorkspaceConnectorClient } from './client';
 import {
   renderWorkspaceActions,

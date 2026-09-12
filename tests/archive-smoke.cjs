@@ -1,0 +1,17 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const root = path.resolve(process.argv[2]);
+const metadata = JSON.parse(fs.readFileSync(path.join(root, 'wa-plugin.json')));
+const plugin = require(path.join(root, metadata.entrypoint)).default;
+assert.equal(plugin.manifest.pluginId, 'official.workspace-connector');
+assert.equal(plugin.manifest.version, metadata.version);
+assert.equal(plugin.manifest.coreApiRange, '^0.3.0');
+for (const method of ['registerCommands', 'registerCancellations', 'registerHooks', 'registerServices']) assert.equal(typeof plugin[method], 'function');
+assert.equal(plugin.lifecycle, undefined);
+const pt = JSON.parse(fs.readFileSync(path.join(root, 'locales/pt-PT/official.workspace-connector.json')));
+for (const key of Object.keys(plugin.manifest.defaultMessages)) assert.ok(pt[key]?.trim(), key);
+for (const file of ['node_modules/@wabs/plugin-sdk/dist/command-plugin.js', 'node_modules/@wabs/plugin-sdk/LICENSE', 'node_modules/zod/LICENSE', 'contracts/provenance.json', 'contracts/LICENSE.workspace-connector']) assert.ok(fs.statSync(path.join(root, file)).isFile());
+assert.equal(fs.existsSync(path.join(root, 'node_modules/geo-tz')), false);
+assert.equal(plugin.manifest.configSchema.parse({ enabled: true, deliveryChatId: 'fixture@g.us', allowedCapabilities: ['fixture.submit.v1'] }).deliveryChatId, 'fixture@g.us');
+console.log(JSON.stringify({ pluginId: metadata.pluginId, version: metadata.version, standaloneLoad: true, translations: Object.keys(pt).length, controls: metadata.operatorConsole.controls.length }));

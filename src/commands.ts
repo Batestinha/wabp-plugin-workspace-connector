@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { CommandMetadata } from '../../../../packages/plugin-sdk/src/command-metadata';
-import type { CommandContext } from '../../../../packages/plugin-sdk/src/commands';
+import type { CommandMetadata } from '@wabs/plugin-sdk/command-metadata';
+import type { CommandContext } from '@wabs/plugin-sdk/commands';
 import {
   WorkspaceConnectorCatalogSchema,
   WorkspaceConnectorCatalogV2Schema,
@@ -12,11 +12,11 @@ import {
   type WorkspaceConnectorCommandAliasV2,
   type WorkspaceConnectorScopeEvidenceV2
 } from './contracts/workspace-connector-v0.3';
-import { requireStableIdentityAddress } from '../../../../packages/plugin-sdk/src/message-actor';
-import type { PluginAction } from '../../../../packages/plugin-sdk/src/actions';
+import { requireStableIdentityAddress } from '@wabs/plugin-sdk/message-actor';
+import type { PluginAction } from '@wabs/plugin-sdk/actions';
 import type { PluginCommandContext } from './runtime';
-import { requireIntegrationCommandContext as requireOfficialCommandRuntime } from '../../../../packages/plugin-sdk/src/integration-plugin';
-import { requireScopeId } from '../../../../packages/plugin-sdk/src/commands';
+import { requireIntegrationCommandContext as requireOfficialCommandRuntime } from '@wabs/plugin-sdk/integration-plugin';
+import { requireScopeId } from '@wabs/plugin-sdk/commands';
 import { WorkspaceConnectorClient } from './client';
 import { parseWorkspaceConnectorConfig, workspaceConnectorConnection } from './config';
 import {
