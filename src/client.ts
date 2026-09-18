@@ -189,10 +189,10 @@ export class WorkspaceConnectorClient {
     return response.deliveries;
   }
 
-  async claimDeliveriesV2(limit = 20, signal?: AbortSignal): Promise<WorkspaceConnectorDeliveryV2[]> {
+  async claimDeliveriesV2(limit = 20, signal?: AbortSignal, privateSessionScopes: Record<string, string[]> = {}): Promise<WorkspaceConnectorDeliveryV2[]> {
     const response = await this.#request(
       `/v1/workspace-connector/v2/deliveries?limit=${Math.max(1, Math.min(100, limit))}`,
-      { method: 'GET', ...(signal ? { signal } : {}) },
+      { method: 'GET', headers: { 'x-workspace-supported-actions': 'start_session', 'x-workspace-private-session-scopes': JSON.stringify(privateSessionScopes) }, ...(signal ? { signal } : {}) },
       WorkspaceConnectorDeliveryClaimResponseV2Schema
     );
     return response.deliveries;

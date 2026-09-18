@@ -497,7 +497,7 @@ async function scheduleWorkspaceSessionTimer(
   });
 }
 
-function assertV2CatalogDigest(catalog: WorkspaceConnectorCatalogV2): void {
+export function assertV2CatalogDigest(catalog: WorkspaceConnectorCatalogV2): void {
   const digest = createHash('sha256').update(workspaceConnectorCatalogDigestPreimage(catalog)).digest('hex');
   if (digest !== catalog.digestSha256) {
     throw new Error('Workspace connector v2 catalog digest did not match its canonical content.');

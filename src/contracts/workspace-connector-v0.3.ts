@@ -639,6 +639,16 @@ const deliveryMediaActionV2 = z.object({
   media: WorkspaceConnectorDeliveryMediaGrantV2Schema
 }).strict();
 
+/** Private actor-bound interaction initiated by the Workspace authority. */
+export const WorkspaceConnectorStartSessionActionV2Schema = z.object({
+  kind: z.literal('start_session'),
+  capabilityId: id,
+  scopeId: opaqueId,
+  session: WorkspaceConnectorSessionDescriptorV2Schema,
+  prompt: z.string().min(1).max(8_000),
+  choices: z.array(z.object({ id: opaqueId, label: z.string().min(1).max(160) }).strict()).min(1).max(20)
+}).strict();
+
 export const WorkspaceConnectorDeliveryV2Schema = z.object({
   protocolVersion: z.literal(WORKSPACE_CONNECTOR_PROTOCOL_VERSION_V2),
   deliveryId: opaqueId,
@@ -647,7 +657,7 @@ export const WorkspaceConnectorDeliveryV2Schema = z.object({
     z.object({ kind: z.literal('scope'), scopeId: opaqueId }).strict(),
     z.object({ kind: z.literal('scope_chat'), scopeId: opaqueId, chatId: opaqueId }).strict()
   ]),
-  action: z.discriminatedUnion('kind', [replyActionV2.omit({ route: true }), openUrlActionV2.omit({ route: true }), deliveryMediaActionV2]),
+  action: z.discriminatedUnion('kind', [replyActionV2.omit({ route: true }), openUrlActionV2.omit({ route: true }), deliveryMediaActionV2, WorkspaceConnectorStartSessionActionV2Schema]),
   sequence: z.object({
     sequenceId: opaqueId,
     index: z.number().int().nonnegative(),

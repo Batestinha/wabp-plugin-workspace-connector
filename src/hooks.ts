@@ -23,6 +23,7 @@ import type { PluginJobEvent, PluginMessageEvent, PluginRuntimeHooks } from '@wa
 import { WorkspaceConnectorClient } from './client';
 import {
   renderWorkspaceActions,
+  assertV2CatalogDigest,
   resolveWorkspaceActionRouteV2,
   workspaceActionsToPluginActionsV2
 } from './commands';
@@ -133,7 +134,12 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
         });
       }
       if (await workspaceV2IsInstalled(context)) {
-        const deliveriesV2 = await client.claimDeliveriesV2(20);
+        const privateScopes: Record<string, string[]> = {};
+        for (const scope of await context.listEnabledScopes?.() ?? []) {
+          const config = parseWorkspaceConnectorConfig(await context.configFor(scope.scopeId));
+          if (config.enabled) privateScopes[scope.scopeId] = config.allowedCapabilities;
+        }
+        const deliveriesV2 = await client.claimDeliveriesV2(20, undefined, privateScopes);
         for (const delivery of deliveriesV2) {
           const acknowledgement = await deliverWorkspaceDeliveryV2(context, client, delivery);
           await client.acknowledgeDeliveryV2(acknowledgement).catch((error) => {
@@ -297,6 +303,11 @@ async function handleWorkspaceSessionMessageV2(
     return handleMediaMessageV2(context, client, installationId, event, session);
   }
   if (!client.continueSessionV2) throw new Error('Workspace connector v2 client is unavailable.');
+  const currentActor = event.actor.identityAddress;
+  if (currentActor.identityId !== session.actorIdentityId || event.actorIdentityId !== session.actorIdentityId) return;
+  if (session.origin.surface === 'private' && event.message.chatId !== session.actorPrivateChatId) return;
+  const currentMembers = await context.currentMemberIdentityIdsForScope?.(session.scopeId);
+  if (!currentMembers?.includes(currentActor.identityId)) return [await reply(context, event, 'official.workspace-connector.scopeUnavailable')];
   const body = event.message.body.trim();
   if (!body || (session.acceptedMessageKinds && session.choices.length === 0)) return;
   const choiceId = session.choices.length > 0
@@ -319,11 +330,11 @@ async function handleWorkspaceSessionMessageV2(
         chatId: event.message.chatId,
         surface: event.message.context
       },
-      scopeEvidence: session.scopeEvidence,
+      scopeEvidence: { ...session.scopeEvidence, checkedAt: new Date().toISOString() },
       locale: session.locale,
       eventId: event.message.id,
       idempotencyKey: `whatsapp-session-v2:${event.message.id}:${session.sessionId}`,
-      actor: session.actor,
+      actor: { identityId: currentActor.identityId, ...(currentActor.phoneNumber ? { verifiedWhatsappNumber: currentActor.phoneNumber.startsWith('+') ? currentActor.phoneNumber : `+${currentActor.phoneNumber}` } : {}) },
       input: choiceId ? { kind: 'choice', choiceId } : { kind: 'text', text: body }
     });
     return await applyWorkspaceResultV2(context, event, session, result);
@@ -422,8 +433,11 @@ export async function deliverWorkspaceDeliveryV2(
     | 'resolveStableIdentityById'
     | 'sendText'
     | 'sendMedia'
+    | 'dataStore'
+    | 'currentMemberIdentityIdsForScope'
+    | 'i18n'
   >,
-  client: Pick<WorkspaceConnectorClient, 'downloadGrantedMediaV2'>,
+  client: Pick<WorkspaceConnectorClient, 'downloadGrantedMediaV2'> & Partial<Pick<WorkspaceConnectorClient, 'catalogV2'>>,
   delivery: WorkspaceConnectorDeliveryV2,
   now = new Date()
 ): Promise<WorkspaceConnectorDeliveryAckV2> {
@@ -437,6 +451,46 @@ export async function deliverWorkspaceDeliveryV2(
     return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'scope.unavailable');
   }
   try {
+    if (delivery.action.kind === 'start_session') {
+      if (delivery.target.kind !== 'identity' || !context.resolveStableIdentityById || !client.catalogV2 || !context.sendText) {
+        return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'delivery.channel_unavailable');
+      }
+      const action = delivery.action;
+      const scoped = parseWorkspaceConnectorConfig(await context.configFor(action.scopeId));
+      const catalog = await client.catalogV2();
+      assertV2CatalogDigest(catalog);
+      if (!scoped.enabled || !scoped.allowedCapabilities.includes(action.capabilityId)
+        || !catalog.capabilities.some(c => c.capabilityId === action.capabilityId && c.interfaces.includes('interactive')))
+        return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'scope.unavailable');
+      const actor = await context.resolveStableIdentityById(delivery.target.identityId);
+      const members = await context.currentMemberIdentityIdsForScope?.(action.scopeId);
+      const groups = await context.coveredGroupsForScope?.(action.scopeId);
+      if (!members?.includes(actor.identityId) || !groups?.[0]) return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'scope.unavailable');
+      const previous = await findWorkspaceMediaSession(context.dataStore, actor.identityId);
+      if (previous && previous.sessionId !== action.session.sessionId) {
+        // Never replace an upload or another conversation behind the user's back.
+        return ackV2(delivery.deliveryId, 'retryable_failure', undefined, 'session.busy');
+      }
+      const origin = { chatId: actor.deliveryChatId, surface: 'private' as const };
+      const locale = (await context.i18n.resolveIdentityLocale(actor.identityId, action.scopeId)).locale;
+      await rememberWorkspaceSessionV2({
+        store: context.dataStore,
+        result: { protocolVersion: 2, invocationId: delivery.idempotencyKey, session: action.session,
+          actions: [{ kind: 'choice', route: { kind: 'actor_private', fallback: 'none' }, prompt: action.prompt, choices: action.choices }] },
+        actorIdentityId: actor.identityId,
+        actor: { identityId: actor.identityId, ...(actor.phoneNumber ? { verifiedWhatsappNumber: actor.phoneNumber.startsWith('+') ? actor.phoneNumber : `+${actor.phoneNumber}` } : {}) },
+        actorPrivateChatId: actor.deliveryChatId, actorMentionWid: actor.mentionWid,
+        scopeId: action.scopeId, origin, groupWid: groups[0].groupWid,
+        scopeEvidence: { kind: 'private_resolution', scopeId: action.scopeId, basis: 'managed_scope_membership', checkedAt: now.toISOString() },
+        capabilityId: action.capabilityId, catalogRevision: catalog.revision, catalogDigestSha256: catalog.digestSha256,
+        authenticatedInteractiveCapabilityIds: catalog.capabilities.filter(c => c.interfaces.includes('interactive')).map(c => c.capabilityId),
+        scopeAllowedCapabilityIds: scoped.allowedCapabilities, locale,
+      });
+      const sent = await context.sendText(actor.deliveryChatId,
+        [action.prompt, ...action.choices.map((choice, i) => `${i + 1}. ${choice.label}`)].join('\n'),
+        { idempotencyKey: `workspace-v2:${delivery.idempotencyKey}`, notAfter: new Date(delivery.expiresAt), waitForServerAck: true });
+      return ackV2(delivery.deliveryId, 'delivered', sent.messageId);
+    }
     if (delivery.action.kind === 'media') {
       if (!context.sendMedia) {
         return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'delivery.channel_unavailable');

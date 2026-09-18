@@ -32,6 +32,8 @@ export async function refreshWorkspaceScopeMemberships(
 ): Promise<boolean> {
   if (!context.listEnabledScopes || !context.currentMemberIdentityIdsForScope) return false;
 
+  // Timestamp the start of authoritative reads, never the end of cached processing.
+  const capturedAt = new Date().toISOString();
   const enabledScopes = await context.listEnabledScopes();
   const scopes = await Promise.all(enabledScopes.map(async (scope) => ({
     scopeId: scope.scopeId,
@@ -72,7 +74,6 @@ export async function refreshWorkspaceScopeMemberships(
   }
 
   const generation = current.generation + 1;
-  const capturedAt = new Date().toISOString();
   const request: WorkspaceScopeMembershipReplaceV1 = {
     schemaVersion: 1,
     installationId,

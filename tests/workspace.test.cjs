@@ -6,6 +6,9 @@ const { WorkspaceConnectorClient } = require('../dist/client');
 const { workspaceConnectorConnection } = require('../dist/config');
 const { rememberWorkspaceSession, findWorkspaceMediaSession } = require('../dist/mediaSessions');
 const { handleWorkspaceSessionMessage } = require('../dist/hooks');
+const { deliverWorkspaceDeliveryV2 } = require('../dist/hooks');
+const { workspaceConnectorCatalogDigestPreimage } = require('../dist/contracts/workspace-connector-v0.3');
+const { createHash } = require('node:crypto');
 const connection = { baseUrl: 'https://workspace.example', oidcIssuer: 'https://identity.example/realms/fixture',
   clientId: 'fixture', clientSecret: 'fixture', audience: 'fixture-api', installationId: 'fixture-installation' };
 const t = (key) => plugin.manifest.defaultMessages[key] ?? key;
@@ -29,6 +32,41 @@ function catalog() {
     aliases: [{ namespace: 'documents', capabilityId: 'fixture.submit.v1', contexts: ['group'], description: 'Fixture submission' }],
     capabilities: [{ capabilityId: 'fixture.submit.v1', kind: 'interactive', maximumPayloadBytes: 8192, mediaMimeTypes: [] }], digestSha256: digest };
 }
+
+test('starts an authenticated private confirmation and binds the reply to current identity and membership', async () => {
+  const ctx = context();
+  const capabilityId = 'account.whatsapp-link.v1';
+  ctx.configFor = async () => ({ enabled: true, allowedCapabilities: [capabilityId] });
+  const address = { identityId: actor.identityId, deliveryChatId: 'fixture@lid', mentionWid: 'fixture@lid', phoneNumber: '351910000001' };
+  ctx.resolveStableIdentityById = async () => address;
+  ctx.coveredGroupsForScope = async () => [{ groupWid: 'fixture@g.us' }];
+  ctx.currentMemberIdentityIdsForScope = async () => [actor.identityId];
+  const sends = [];
+  ctx.sendText = async (...args) => { sends.push(args); return { messageId: 'sent-confirmation' }; };
+  const cat = { protocolVersion: 2, workspaceId: 'fixture-workspace', workspaceLabel: 'Fixture workspace', revision: 8,
+    aliases: [], capabilities: [{ capabilityId, interfaces: ['interactive'], maximumPayloadBytes: 65536, mediaMimeTypes: [], cancellationSupported: true }] };
+  cat.digestSha256 = createHash('sha256').update(workspaceConnectorCatalogDigestPreimage(cat)).digest('hex');
+  const client = { catalogV2: async () => cat };
+  const delivery = { protocolVersion: 2, deliveryId: 'confirmation-delivery', idempotencyKey: 'confirmation-once',
+    target: { kind: 'identity', identityId: actor.identityId }, expiresAt: '2099-01-01T00:00:00.000Z',
+    action: { kind: 'start_session', capabilityId, scopeId: 'fixture-scope',
+      session: { sessionId: 'confirmation-session', expiresAt: '2099-01-01T00:00:00.000Z' },
+      prompt: 'Confirm linking?', choices: [{ id: 'confirm', label: 'Confirm' }, { id: 'reject', label: 'Reject' }] } };
+  assert.equal((await deliverWorkspaceDeliveryV2(ctx, client, delivery)).disposition, 'delivered');
+  assert.equal(sends[0][0], 'fixture@lid');
+  assert.equal((await findWorkspaceMediaSession(ctx.dataStore, actor.identityId)).origin.surface, 'private');
+  const competing = structuredClone(delivery); competing.action.session.sessionId = 'another-session';
+  assert.equal((await deliverWorkspaceDeliveryV2(ctx, client, competing)).disposition, 'retryable_failure');
+  assert.equal(sends.length, 1);
+  let callback;
+  const event = { pluginId: plugin.manifest.pluginId, scopeId: 'fixture-scope', receivedAt: new Date(), actorIdentityId: actor.identityId,
+    actorWid: 'fixture@lid', actor: { identityAddress: { ...address, phoneNumber: '351910000099' } },
+    message: { id: 'confirm-response', body: '1', context: 'private', chatId: 'fixture@lid' }, isCommandLike: false };
+  client.continueSessionV2 = async input => { callback = input; return { protocolVersion: 2, invocationId: 'confirmed', actions: [] }; };
+  await handleWorkspaceSessionMessage(ctx, client, connection.installationId, event);
+  assert.equal(callback.actor.verifiedWhatsappNumber, '+351910000099'); // Never reuse the stored number.
+  assert.deepEqual(callback.input, { kind: 'choice', choiceId: 'confirm' });
+});
 
 test('preserves scoped settings and rejects an unsafe deployment endpoint', () => {
   const value = { enabled: true, deliveryChatId: 'fixture@g.us', allowedCapabilities: ['fixture.submit.v1'] };

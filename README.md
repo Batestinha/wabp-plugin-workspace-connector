@@ -19,3 +19,11 @@ explanations override localized defaults. When no Global scope exists, all enabl
 account-wide private authentication settings. Conflicts reject delivery before a code is sent. The default keeps the existing combined
 message. Requires WABP core API 0.3.9 or later; the host continues to enforce the
 sensitive delivery endpoint's acknowledgement, deadline, replay, and privacy rules.
+
+
+Version 0.8.0 supports neutral server-initiated private sessions (`start_session`)
+using the Workspace 0.4.0 contract. Delivery polling advertises the current
+per-scope capability allowlist. A session starts only for a current managed-scope
+member and an enabled, authenticated interactive capability. It never replaces
+an existing conversation. Continuations use the sender's current stable identity
+and verified phone number, and refresh membership evidence.
