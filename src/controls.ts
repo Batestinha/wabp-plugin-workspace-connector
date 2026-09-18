@@ -4,9 +4,9 @@ import { WORKSPACE_CONNECTOR_PLUGIN_ID } from './manifest';
 
 export const workspaceConnectorControls: ControlDescriptor[] = [
   ...([
-    ['otpCodeSeparate', 'Send sign-in codes separately', 'Send only the code first, then quote-reply to it with the explanation. Configure this in the account’s Global scope; it applies to private sign-in and password-recovery deliveries.', true],
-    ['otpLoginExplanation', 'Sign-in code explanation', 'Optional explanation sent as a reply to the isolated code. Leave blank for the localized default. Configure in the Global scope.', false],
-    ['otpRecoveryExplanation', 'Password-recovery code explanation', 'Optional recovery explanation sent as a reply to the isolated code. Leave blank for the localized default. Configure in the Global scope.', false]
+    ['otpCodeSeparate', 'Send sign-in codes separately', 'Send only the code first, then quote-reply to it with the explanation. These settings apply to private sign-in and password recovery for this account. Use the Global scope when present; otherwise, enabled Workspace Connector scopes must use matching settings.', true],
+    ['otpLoginExplanation', 'Sign-in code explanation', 'Optional explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Workspace Connector scopes.', false],
+    ['otpRecoveryExplanation', 'Password-recovery code explanation', 'Optional recovery explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Workspace Connector scopes.', false]
   ] as const).map(([path, label, description, toggle], index) => defineControl({
     id: `plugin.${WORKSPACE_CONNECTOR_PLUGIN_ID}.${path}`, label, description,
     plane: 'plugin-scope-config', domain: 'official-plugin-settings', section: 'Sign-in codes', order: 40 + index,

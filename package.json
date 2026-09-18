@@ -1,6 +1,6 @@
 {
   "name": "@wabs/plugin-workspace-connector",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Connect managed WhatsApp scopes to capabilities declared by an external Workspace authority.",
   "license": "MIT",
   "private": true,

@@ -13,8 +13,8 @@ export const WORKSPACE_CONNECTOR_AMBIENT_JOB = 'workspace-connector.ambient-even
 export const workspaceConnectorManifest: PluginManifest = {
   pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID,
   kind: 'managed_group',
-  version: '0.7.0',
-  coreApiRange: '^0.3.8',
+  version: '0.7.1',
+  coreApiRange: '^0.3.9',
   messageNamespace: 'official.workspace-connector',
   descriptionKey: 'official.workspace-connector.description',
   defaultMessages: workspaceConnectorMessages,
