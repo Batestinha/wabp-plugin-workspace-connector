@@ -4,8 +4,8 @@
   "name": "Workspace Connector",
   "description": "Connect managed WhatsApp scopes to capabilities declared by an external Workspace authority.",
   "kind": "managed_group",
-  "version": "0.6.1",
-  "coreApiRange": "^0.3.0",
+  "version": "0.7.0",
+  "coreApiRange": "^0.3.8",
   "entrypoint": "dist/index.js",
   "messageNamespace": "official.workspace-connector",
   "descriptionKey": "official.workspace-connector.description",
@@ -154,9 +154,82 @@
     "configPaths": [
       "enabled",
       "allowedCapabilities",
-      "deliveryChatId"
+      "deliveryChatId",
+      "otpCodeSeparate",
+      "otpLoginExplanation",
+      "otpRecoveryExplanation"
     ],
     "controls": [
+      {
+        "path": "otpCodeSeparate",
+        "id": "plugin.official.workspace-connector.otpCodeSeparate",
+        "label": "Send sign-in codes separately",
+        "description": "Send only the code first, then quote-reply to it with the explanation. Configure this in the account’s Global scope; it applies to private sign-in and password-recovery deliveries.",
+        "section": "Sign-in codes",
+        "order": 40,
+        "schema": {
+          "type": "boolean"
+        },
+        "ui": {
+          "widget": "toggle",
+          "helpText": "Send only the code first, then quote-reply to it with the explanation. Configure this in the account’s Global scope; it applies to private sign-in and password-recovery deliveries."
+        },
+        "dangerous": false,
+        "sensitivity": {
+          "sensitive": false,
+          "redact": "none"
+        },
+        "relatedCommandIds": [],
+        "relatedActionIds": []
+      },
+      {
+        "path": "otpLoginExplanation",
+        "id": "plugin.official.workspace-connector.otpLoginExplanation",
+        "label": "Sign-in code explanation",
+        "description": "Optional explanation sent as a reply to the isolated code. Leave blank for the localized default. Configure in the Global scope.",
+        "section": "Sign-in codes",
+        "order": 41,
+        "schema": {
+          "type": "string",
+          "max": 400
+        },
+        "ui": {
+          "widget": "text",
+          "multiline": true,
+          "helpText": "Optional explanation sent as a reply to the isolated code. Leave blank for the localized default. Configure in the Global scope."
+        },
+        "dangerous": false,
+        "sensitivity": {
+          "sensitive": false,
+          "redact": "none"
+        },
+        "relatedCommandIds": [],
+        "relatedActionIds": []
+      },
+      {
+        "path": "otpRecoveryExplanation",
+        "id": "plugin.official.workspace-connector.otpRecoveryExplanation",
+        "label": "Password-recovery code explanation",
+        "description": "Optional recovery explanation sent as a reply to the isolated code. Leave blank for the localized default. Configure in the Global scope.",
+        "section": "Sign-in codes",
+        "order": 42,
+        "schema": {
+          "type": "string",
+          "max": 400
+        },
+        "ui": {
+          "widget": "text",
+          "multiline": true,
+          "helpText": "Optional recovery explanation sent as a reply to the isolated code. Leave blank for the localized default. Configure in the Global scope."
+        },
+        "dangerous": false,
+        "sensitivity": {
+          "sensitive": false,
+          "redact": "none"
+        },
+        "relatedCommandIds": [],
+        "relatedActionIds": []
+      },
       {
         "id": "plugin.official.workspace-connector.enabled",
         "path": "enabled",

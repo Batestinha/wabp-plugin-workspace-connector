@@ -1,4 +1,6 @@
 export const workspaceConnectorMessages = {
+  'official.workspace-connector.otp.loginExplanation': 'Topomare sign-in code. Expires in 5 minutes. If you did not request this code, ignore this message.',
+  'official.workspace-connector.otp.recoveryExplanation': 'Topomare password-recovery code. Expires in 5 minutes. If you did not request this code, ignore this message.',
   'official.workspace-connector.description': 'Connect this bot to one external Workspace authority without embedding application business rules.',
   'official.workspace-connector.help.family': 'Workspace',
   'official.workspace-connector.help.feature.title': 'Workspace connector',

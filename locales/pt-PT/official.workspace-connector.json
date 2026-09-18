@@ -25,5 +25,7 @@
   "official.workspace-connector.mediaUnavailable": "O Espaço de Trabalho não conseguiu aceitar este ficheiro. Tenta novamente.",
   "official.workspace-connector.sendAsAcceptedKind": "Envia este ficheiro como documento para preservar a qualidade e os metadados originais.",
   "official.workspace-connector.cancelled": "O pedido ativo do Espaço de Trabalho foi cancelado e os ficheiros temporários foram removidos.",
-  "official.workspace-connector.cancelFailed": "Não foi possível cancelar o pedido ativo do Espaço de Trabalho. Tenta novamente."
+  "official.workspace-connector.cancelFailed": "Não foi possível cancelar o pedido ativo do Espaço de Trabalho. Tenta novamente.",
+  "official.workspace-connector.otp.loginExplanation": "Código de acesso de Topo & Maré. Expira em 5 minutos. Se não pediu este código, ignore esta mensagem.",
+  "official.workspace-connector.otp.recoveryExplanation": "Código de recuperação da palavra-passe de Topo & Maré. Expira em 5 minutos. Se não pediu este código, ignore esta mensagem."
 }

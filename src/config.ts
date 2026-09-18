@@ -2,6 +2,9 @@ import { z } from 'zod';
 
 export const workspaceConnectorConfigSchema = z.object({
   enabled: z.boolean().default(false),
+  otpCodeSeparate: z.boolean().default(false),
+  otpLoginExplanation: z.string().trim().max(400).default(''),
+  otpRecoveryExplanation: z.string().trim().max(400).default(''),
   deliveryChatId: z.union([
     z.literal(''),
     z.string().trim().min(1).max(512).regex(/^[A-Za-z0-9][A-Za-z0-9._:@\/-]*$/)

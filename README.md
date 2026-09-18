@@ -11,3 +11,11 @@ Install through a trusted WABS registry entry. Installation and scope enablement
 Run `npm ci --ignore-scripts`, `npm test`, then `npm run release:archive`. Tests use fixture identifiers, in-memory storage and mocked network requests. CI checks Node22.23.2 and24.15.0, reproducible archives and execution outside the repository.
 
 `provenance.json` records imported source history and the exact SDK archive. Runtime dependencies retain their licenses. No host database, queue implementation or application runtime is included.
+
+In the operator console, open Workspace Connector settings in the account's
+Global scope and use `Sign-in codes` to enable sending the OTP on its own before
+an explanatory message that quotes it. Optional sign-in and password-recovery
+explanations override localized defaults. Group overrides do not affect this
+account-wide private authentication flow. The default keeps the existing combined
+message. Requires WABP core API 0.3.8 or later; the host continues to enforce the
+sensitive delivery endpoint's acknowledgement, deadline, replay, and privacy rules.

@@ -3,6 +3,20 @@ import type { ControlDescriptor } from '@wabs/plugin-sdk/controls-types';
 import { WORKSPACE_CONNECTOR_PLUGIN_ID } from './manifest';
 
 export const workspaceConnectorControls: ControlDescriptor[] = [
+  ...([
+    ['otpCodeSeparate', 'Send sign-in codes separately', 'Send only the code first, then quote-reply to it with the explanation. Configure this in the account’s Global scope; it applies to private sign-in and password-recovery deliveries.', true],
+    ['otpLoginExplanation', 'Sign-in code explanation', 'Optional explanation sent as a reply to the isolated code. Leave blank for the localized default. Configure in the Global scope.', false],
+    ['otpRecoveryExplanation', 'Password-recovery code explanation', 'Optional recovery explanation sent as a reply to the isolated code. Leave blank for the localized default. Configure in the Global scope.', false]
+  ] as const).map(([path, label, description, toggle], index) => defineControl({
+    id: `plugin.${WORKSPACE_CONNECTOR_PLUGIN_ID}.${path}`, label, description,
+    plane: 'plugin-scope-config', domain: 'official-plugin-settings', section: 'Sign-in codes', order: 40 + index,
+    visibility: 'bot_admin', configurable: true,
+    storage: { kind: 'plugin-scope-config', pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID, path },
+    schema: toggle ? { type: 'boolean' } : { type: 'string', max: 400 },
+    ui: toggle ? { widget: 'toggle', helpText: description } : { widget: 'text', multiline: true, helpText: description },
+    restartRequirement: 'NO_RESTART', dangerous: false, sensitivity: { sensitive: false, redact: 'none' },
+    auditAction: 'operator_console.plugin_config.update', relatedCommandIds: [], relatedActionIds: []
+  })),
   defineControl({
     id: `plugin.${WORKSPACE_CONNECTOR_PLUGIN_ID}.enabled`,
     label: 'Enabled',
