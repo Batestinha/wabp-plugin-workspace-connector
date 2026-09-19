@@ -126,13 +126,6 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
     if (polling || stopped) return;
     polling = true;
     try {
-      const deliveries = await client.claimDeliveries(20);
-      for (const delivery of deliveries) {
-        const acknowledgement = await deliverWorkspaceDelivery(context, delivery);
-        await client.acknowledgeDelivery(acknowledgement).catch((error) => {
-          context.logger.warn({ error, deliveryId: delivery.deliveryId }, 'Workspace v1 delivery acknowledgement failed');
-        });
-      }
       if (await workspaceV2IsInstalled(context)) {
         const privateScopes: Record<string, string[]> = {};
         for (const scope of await context.listEnabledScopes?.() ?? []) {
@@ -144,6 +137,14 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
           const acknowledgement = await deliverWorkspaceDeliveryV2(context, client, delivery);
           await client.acknowledgeDeliveryV2(acknowledgement).catch((error) => {
             context.logger.warn({ error, deliveryId: delivery.deliveryId }, 'Workspace v2 delivery acknowledgement failed');
+          });
+        }
+      } else {
+        const deliveries = await client.claimDeliveries(20);
+        for (const delivery of deliveries) {
+          const acknowledgement = await deliverWorkspaceDelivery(context, delivery);
+          await client.acknowledgeDelivery(acknowledgement).catch((error) => {
+            context.logger.warn({ error, deliveryId: delivery.deliveryId }, 'Workspace v1 delivery acknowledgement failed');
           });
         }
       }

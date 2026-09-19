@@ -7,6 +7,7 @@ const { workspaceConnectorConnection } = require('../dist/config');
 const { rememberWorkspaceSession, findWorkspaceMediaSession } = require('../dist/mediaSessions');
 const { handleWorkspaceSessionMessage } = require('../dist/hooks');
 const { deliverWorkspaceDeliveryV2 } = require('../dist/hooks');
+const { createWorkspaceConnectorHooks } = require('../dist/hooks');
 const { workspaceConnectorCatalogDigestPreimage } = require('../dist/contracts/workspace-connector-v0.3');
 const { createHash } = require('node:crypto');
 const connection = { baseUrl: 'https://workspace.example', oidcIssuer: 'https://identity.example/realms/fixture',
@@ -92,6 +93,37 @@ test('registers commands, cancellations and hooks without deployment credentials
   assert.equal(result.handled, true);
   assert.ok(result.text);
   assert.equal(ctx.dataStore.rows.size, 0);
+});
+
+test('v2 delivery polling succeeds when the retired v1 delivery endpoint is unavailable', async (t) => {
+  const v2Catalog = { protocolVersion: 2, workspaceId: 'fixture-workspace', workspaceLabel: 'Fixture workspace',
+    revision: 1, aliases: [], capabilities: [], ambientTriggers: [], digestSha256: 'a'.repeat(64) };
+  const ctx = context(storeFrom(new Map([['catalog:v2', v2Catalog]])));
+  ctx.config = { WORKSPACE_CONNECTOR_BASE_URL: 'https://workspace.example',
+    WORKSPACE_CONNECTOR_OIDC_ISSUER: 'https://identity.example/realms/fixture',
+    WORKSPACE_CONNECTOR_OIDC_CLIENT_ID: 'fixture', WORKSPACE_CONNECTOR_OIDC_AUDIENCE: 'fixture-api',
+    WORKSPACE_CONNECTOR_INSTALLATION_ID: 'fixture-installation',
+    WORKSPACE_CONNECTOR_DELIVERY_POLL_ENABLED: true, workspaceConnectorOidcClientSecret: 'fixture-secret-for-tests' };
+  ctx.listEnabledScopes = async () => [{ scopeId: 'gallery-scope', name: 'Gallery' }];
+  ctx.configFor = async () => ({ enabled: true, deliveryChatId: '', allowedCapabilities: ['account.whatsapp-link.v1'] });
+  let observed;
+  const result = new Promise((resolve) => { observed = resolve; });
+  t.mock.method(WorkspaceConnectorClient.prototype, 'claimDeliveries', async () => {
+    observed('retired-v1-claim');
+    throw new Error('v1 delivery route is unavailable');
+  });
+  t.mock.method(WorkspaceConnectorClient.prototype, 'claimDeliveriesV2', async (_limit, _signal, scopes) => {
+    observed(scopes);
+    return [];
+  });
+  const hooks = createWorkspaceConnectorHooks(ctx);
+  try {
+    assert.deepEqual(await Promise.race([result, new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Delivery polling did not run')), 500))]),
+    { 'gallery-scope': ['account.whatsapp-link.v1'] });
+  } finally {
+    hooks.onShutdown?.();
+  }
 });
 
 test('reads a persisted v1 session after restart and preserves catalog and actor binding through continuation', async () => {
