@@ -10,7 +10,7 @@ const { workspaceConnectorCatalogDigestPreimage } = require('../dist/contracts/w
 
 function fixture(t) {
   const rows = new Map(), prompts = [], sends = [], acknowledgements = [], callbacks = [];
-  const locks = new Map();
+  const locks = new Map(), promptDeliveries = new Map(), closedPrompts = new Set();
   let handler, handlerOptions;
   const capabilityId = 'fixture.confirm.v1';
   const address = { identityId: 'person-1', deliveryChatId: 'person@lid', mentionWid: 'person@lid', phoneNumber: '351910000001' };
@@ -38,9 +38,20 @@ function fixture(t) {
       whenTransportReady: async () => {},
       registerPromptHandler: (_purpose, callback, options) => { handler = callback; handlerOptions = options; },
       inspectIdentityFlowStart: async () => ({ kind: 'available' }),
-      promptChoice: async input => { prompts.push(input); return { flowPromptId: `prompt-${prompts.length}`, messageIds: [`prompt-message-${prompts.length}`], deliveryCompletedNow: true, hasPollMessages: false }; },
+      promptChoice: async input => {
+        const key = input.questionSendOptions.idempotencyKey;
+        const previous = promptDeliveries.get(key);
+        if (previous) {
+          if (closedPrompts.has(previous.flowPromptId)) throw new Error('FlowPrompt is no longer deliverable.');
+          return { ...previous, deliveryCompletedNow: false };
+        }
+        prompts.push(input);
+        const result = { flowPromptId: `prompt-${prompts.length}`, messageIds: [`prompt-message-${prompts.length}`], deliveryCompletedNow: true, hasPollMessages: false };
+        promptDeliveries.set(key, result);
+        return result;
+      },
       getLockedPromptLock: async id => locks.get(id),
-      acknowledgePromptLock: async id => { acknowledgements.push(id); return locks.delete(id); },
+      acknowledgePromptLock: async id => { acknowledgements.push(id); closedPrompts.add(id); return locks.delete(id); },
       cancelPromptBySubject: async () => 1,
     } };
   const client = { catalogV2: async () => catalog };
@@ -155,6 +166,93 @@ test('a duplicate delivery cannot reopen a completed remote session', async t =>
   assert.equal(await findWorkspaceMediaSession(f.context.dataStore, 'person-1'), undefined);
 });
 
+test('receipt-write failure followed by a human completion cannot reopen the session on delivery retry', async t => {
+  const f = fixture(t);
+  const persist = f.context.dataStore.set;
+  let failed = false;
+  f.context.dataStore.set = async (key, value) => {
+    if (key.endsWith(':receipt') && !failed) { failed = true; throw new Error('receipt database unavailable'); }
+    return persist(key, value);
+  };
+  assert.equal((await f.start()).disposition, 'retryable_failure');
+  await f.handle(f.lock());
+  assert.equal(await findWorkspaceMediaSession(f.context.dataStore, 'person-1'), undefined);
+  const retry = await f.start();
+  assert.equal(await findWorkspaceMediaSession(f.context.dataStore, 'person-1'), undefined);
+  assert.equal(retry.disposition, 'delivered');
+  assert.equal(retry.providerMessageId, 'prompt-message-1');
+  assert.equal(f.prompts.length, 1);
+  assert.equal(f.callbacks.length, 1);
+});
+
+test('a missing exact receipt keeps the human lock recoverable until its persistence succeeds', async t => {
+  const f = fixture(t);
+  const persist = f.context.dataStore.set;
+  f.context.dataStore.set = async (key, value) => {
+    if (key.endsWith(':receipt')) throw new Error('receipt database unavailable');
+    return persist(key, value);
+  };
+  assert.equal((await f.start()).disposition, 'retryable_failure');
+  const lock = f.lock();
+  await assert.rejects(f.handle(lock), /receipt database unavailable/);
+  assert.equal(f.callbacks.length, 0);
+  assert.deepEqual(f.acknowledgements, []);
+  assert.ok(f.locks.has('prompt-1'));
+  f.context.dataStore.set = persist;
+  await f.handle(lock);
+  assert.equal(f.callbacks.length, 1);
+  assert.equal((await f.start()).providerMessageId, 'prompt-message-1');
+});
+
+test('a completed prompt without its exact receipt fails closed without restoring session state', async t => {
+  const f = fixture(t);
+  await f.start();
+  await f.handle(f.lock());
+  await f.context.dataStore.delete(`${f.prompts[0].subjectId}:receipt`);
+  assert.equal((await f.start()).disposition, 'retryable_failure');
+  assert.equal(await findWorkspaceMediaSession(f.context.dataStore, 'person-1'), undefined);
+  assert.equal(f.callbacks.length, 1);
+});
+
+for (const completion of ['reply', 'cancel']) {
+  test(`an in-flight delivery retry cannot overwrite concurrent human ${completion} completion`, async t => {
+    const f = fixture(t);
+    const persist = f.context.dataStore.set;
+    f.context.dataStore.set = async (key, value) => {
+      if (key.endsWith(':receipt')) throw new Error('receipt database unavailable');
+      return persist(key, value);
+    };
+    assert.equal((await f.start()).disposition, 'retryable_failure');
+    f.context.dataStore.set = persist;
+    const read = f.context.dataStore.get;
+    let pause = true, release, entered;
+    const paused = new Promise(resolve => { entered = resolve; });
+    const resume = new Promise(resolve => { release = resolve; });
+    f.context.dataStore.get = async key => {
+      const value = await read(key);
+      if (pause && key.endsWith(':receipt')) { pause = false; entered(); await resume; }
+      return value;
+    };
+    const retry = f.start();
+    await paused;
+    let remoteCalls = 0;
+    const registration = registerWorkspaceConnectorCancellations(f.context, () => ({ continueSessionV2: async () => {
+      remoteCalls++;
+      return { protocolVersion: 2, invocationId: 'cancelled', actions: [] };
+    } }))[0];
+    const finished = completion === 'reply' ? f.handle(f.lock()) : registration.cancel({ actorIdentityId: 'person-1',
+      message: { id: 'cancel-message', chatId: 'person@lid', context: 'private', body: '/cancel' } });
+    await new Promise(resolve => setImmediate(resolve));
+    const callsWhileDeliveryPending = f.callbacks.length + remoteCalls;
+    release();
+    await Promise.all([retry, finished]);
+    assert.equal(callsWhileDeliveryPending, 0);
+    assert.equal(await findWorkspaceMediaSession(f.context.dataStore, 'person-1'), undefined);
+    assert.equal((await f.start()).providerMessageId, 'prompt-message-1');
+    assert.equal(f.callbacks.length + remoteCalls, 1);
+  });
+}
+
 test('private session delivery fails closed when FlowEngine is unavailable', async t => {
   const f = fixture(t);
   delete f.context.flowEngine;
@@ -244,6 +342,28 @@ test('user cancellation closes the owned FlowEngine prompt after remote cancella
   assert.equal(result.cancelled, true);
   assert.deepEqual(cancellations, [{ purpose: f.prompts[0].purpose, subjectId: f.prompts[0].subjectId, includeLocked: true }]);
   assert.equal(await findWorkspaceMediaSession(f.context.dataStore, 'person-1'), undefined);
+});
+
+test('delivery retry cannot reopen a user-cancelled session whose send receipt was not persisted', async t => {
+  const f = fixture(t);
+  const persist = f.context.dataStore.set;
+  f.context.dataStore.set = async (key, value) => {
+    if (key.endsWith(':receipt')) throw new Error('receipt database unavailable');
+    return persist(key, value);
+  };
+  assert.equal((await f.start()).disposition, 'retryable_failure');
+  const registration = registerWorkspaceConnectorCancellations(f.context, () => ({ continueSessionV2: async () => (
+    { protocolVersion: 2, invocationId: 'cancelled', actions: [] }
+  ) }))[0];
+  const result = await registration.cancel({ actorIdentityId: 'person-1',
+    message: { id: 'cancel-message', chatId: 'person@lid', context: 'private', body: '/cancel' } });
+  assert.equal(result.cancelled, true);
+  f.context.dataStore.set = persist;
+  const retry = await f.start();
+  assert.equal(await findWorkspaceMediaSession(f.context.dataStore, 'person-1'), undefined);
+  assert.equal(retry.disposition, 'retryable_failure');
+  assert.equal(retry.providerMessageId, undefined);
+  assert.equal(f.prompts.length, 1);
 });
 
 test('restart recovers a pending prompt send with its original question and delivery key', async t => {

@@ -57,7 +57,7 @@ import {
 import { refreshWorkspaceScopeDirectory } from './scopeDirectory';
 import { refreshWorkspaceScopeMemberships } from './scopeMembershipDirectory';
 import { adoptWorkspacePrivateChoice, deliverWorkspacePrivateChoice, recoverWorkspacePrivateChoices,
-  registerWorkspacePrivateChoiceHandler, workspacePrivatePromptReceipt } from './privatePrompts';
+  registerWorkspacePrivateChoiceHandler, withWorkspacePrivateSessionLock, workspacePrivatePromptReceipt } from './privatePrompts';
 
 const DELIVERY_POLL_INTERVAL_MS = 15_000;
 const SCOPE_DIRECTORY_REFRESH_INTERVAL_MS = 60_000;
@@ -453,6 +453,18 @@ export async function deliverWorkspaceDeliveryV2(
   client: Pick<WorkspaceConnectorClient, 'downloadGrantedMediaV2'> & Partial<Pick<WorkspaceConnectorClient, 'catalogV2'>>,
   delivery: WorkspaceConnectorDeliveryV2,
   now = new Date()
+): Promise<WorkspaceConnectorDeliveryAckV2> {
+  if (delivery.action.kind === 'start_session' && delivery.target.kind === 'identity') {
+    return withWorkspacePrivateSessionLock(context, delivery.target.identityId,
+      () => executeWorkspaceDeliveryV2(context, client, delivery, now));
+  }
+  return executeWorkspaceDeliveryV2(context, client, delivery, now);
+}
+
+async function executeWorkspaceDeliveryV2(
+  context: Parameters<typeof deliverWorkspaceDeliveryV2>[0],
+  client: Parameters<typeof deliverWorkspaceDeliveryV2>[1],
+  delivery: WorkspaceConnectorDeliveryV2, now: Date
 ): Promise<WorkspaceConnectorDeliveryAckV2> {
   if (new Date(delivery.expiresAt).getTime() <= now.getTime()) {
     return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'delivery.expired');

@@ -22,9 +22,24 @@ const promptRecordSchema = z.object({
   result: WorkspaceConnectorInvocationResultV2Schema.optional(),
   completed: z.boolean().optional()
 });
+type PromptRecord = z.infer<typeof promptRecordSchema>;
 type PromptContext = Pick<PluginRuntimeContext,
   'flowEngine' | 'dataStore' | 'i18n' | 'sendText' | 'configFor' | 'resolveStableIdentityById'
   | 'currentMemberIdentityIdsForScope' | 'coveredGroupsForScope' | 'enqueuePluginJob'>;
+const privateSessionOperations = new Map<string, Promise<unknown>>();
+
+/** Serialize this plugin's delivery, reply and cancellation writes within the account runtime. */
+export async function withWorkspacePrivateSessionLock<T>(
+  context: Pick<PromptContext, 'flowEngine'>, actorIdentityId: string, operation: () => Promise<T>
+): Promise<T> {
+  if (!context.flowEngine) return operation();
+  const key = JSON.stringify([context.flowEngine.workflowRuntimeBindingId, actorIdentityId]);
+  const previous = privateSessionOperations.get(key) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(operation);
+  privateSessionOperations.set(key, current);
+  try { return await current; }
+  finally { if (privateSessionOperations.get(key) === current) privateSessionOperations.delete(key); }
+}
 
 function promptSubjectId(idempotencyKey: string): string {
   return `workspace-private-choice:${createHash('sha256').update(idempotencyKey).digest('hex')}`;
@@ -45,7 +60,25 @@ export async function workspacePrivatePromptReceipt(
   if (record.data.session.actorIdentityId !== actorIdentityId || record.data.session.sessionId !== sessionId) {
     throw new Error('Workspace prompt delivery changed its identity or session binding.');
   }
-  return context.dataStore.get<string>(`${promptSubjectId(idempotencyKey)}:receipt`);
+  const receipt = await context.dataStore.get<string>(`${promptSubjectId(idempotencyKey)}:receipt`);
+  if (!receipt && record.data.completed) {
+    // A closed host prompt cannot be sent again to reconstruct a missing receipt.
+    throw new Error('Completed Workspace prompt is missing its exact delivery receipt.');
+  }
+  return receipt;
+}
+
+export async function markWorkspacePrivateChoiceCompleted(
+  context: Pick<PromptContext, 'dataStore'>, session: StoredWorkspaceSessionV2
+): Promise<void> {
+  const subjectId = session.privatePromptSubjectId;
+  if (!subjectId) return;
+  const record = promptRecordSchema.parse(await context.dataStore.get(subjectId));
+  if (record.session.actorIdentityId !== session.actorIdentityId || record.session.sessionId !== session.sessionId
+    || record.session.privatePromptSubjectId !== subjectId || promptSubjectId(record.idempotencyKey) !== subjectId) {
+    throw new Error('Workspace prompt completion changed its identity or session binding.');
+  }
+  await context.dataStore.set(subjectId, { ...record, completed: true });
 }
 
 export async function deliverWorkspacePrivateChoice(
@@ -59,9 +92,18 @@ export async function deliverWorkspacePrivateChoice(
   const receipt = await workspacePrivatePromptReceipt(context, idempotencyKey, session.actorIdentityId, session.sessionId);
   if (receipt) return receipt;
   const bound = { ...session, privatePromptSubjectId: subjectId };
-  await context.dataStore.set(subjectId, { ...(previous.success ? previous.data : {}), session: bound,
-    question: prompt, idempotencyKey, expiresAt: expiresAt.toISOString() });
+  const record = { ...(previous.success ? previous.data : {}), session: bound,
+    question: prompt, idempotencyKey, expiresAt: expiresAt.toISOString() };
+  await context.dataStore.set(subjectId, record);
   await storeWorkspaceSession(context.dataStore, bound);
+  return persistWorkspacePrivatePromptReceipt(context, record);
+}
+
+async function persistWorkspacePrivatePromptReceipt(context: PromptContext, record: PromptRecord): Promise<string> {
+  const engine = context.flowEngine;
+  if (!engine) throw new Error('Workspace private choices require FlowEngine.');
+  const { session, question: prompt, idempotencyKey } = record;
+  const subjectId = promptSubjectId(idempotencyKey), expiresAt = new Date(record.expiresAt);
   const delivered = await engine.promptChoice({
     purpose: WORKSPACE_PRIVATE_CHOICE_PURPOSE, subjectType: promptSubjectType(engine), subjectId,
     question: prompt, options: session.choices,
@@ -89,7 +131,8 @@ export function registerWorkspacePrivateChoiceHandler(
   engine.registerPromptHandler(WORKSPACE_PRIVATE_CHOICE_PURPOSE, lock => {
     const current = running.get(lock.flowPromptId);
     if (current) return current;
-    const work = continuePrivateChoice(context, engine, client, installationId, lock)
+    const work = withWorkspacePrivateSessionLock(context, lock.voterIdentityId,
+      () => continuePrivateChoice(context, engine, client, installationId, lock))
       .finally(() => running.delete(lock.flowPromptId));
     running.set(lock.flowPromptId, work);
     return work;
@@ -110,6 +153,13 @@ export async function recoverWorkspacePrivateChoices(context: PromptContext, ins
 }
 
 export async function adoptWorkspacePrivateChoice(
+  context: PromptContext, installationId: string, actorIdentityId: string
+): Promise<boolean> {
+  return withWorkspacePrivateSessionLock(context, actorIdentityId,
+    () => adoptWorkspacePrivateChoiceUnlocked(context, installationId, actorIdentityId));
+}
+
+async function adoptWorkspacePrivateChoiceUnlocked(
   context: PromptContext, installationId: string, actorIdentityId: string
 ): Promise<boolean> {
   const engine = context.flowEngine;
@@ -155,6 +205,12 @@ async function continuePrivateChoice(
   if (session.choices.length ? !session.choices.some(option => option.id === choice.id)
     : choice.id !== 'workspace-text' || choice.isFreeText !== true || !choice.label.trim()) return false;
   if (record.completed) { await engine.acknowledgePromptLock(lock.flowPromptId); return true; }
+
+  // Capture the host's durable send receipt before completing this lock: host acknowledgement
+  // cancels the prompt, after which an outbox retry cannot recover it through promptChoice.
+  if (!await workspacePrivatePromptReceipt(context, record.idempotencyKey, session.actorIdentityId, session.sessionId)) {
+    await persistWorkspacePrivatePromptReceipt(context, record);
+  }
 
   const current = await findWorkspaceMediaSession(context.dataStore, session.actorIdentityId);
   if (!record.result && (!current || current.schemaVersion !== 2 || current.sessionId !== session.sessionId

@@ -1,7 +1,7 @@
 import type { PluginCancellationRegistration } from '@wabs/plugin-sdk/cancellations';
 import type { PluginCommandContext } from './runtime';
 import { WorkspaceConnectorClient } from './client';
-import { WORKSPACE_PRIVATE_CHOICE_PURPOSE } from './privatePrompts';
+import { markWorkspacePrivateChoiceCompleted, withWorkspacePrivateSessionLock, WORKSPACE_PRIVATE_CHOICE_PURPOSE } from './privatePrompts';
 import { renderWorkspaceActions } from './commands';
 import { workspaceConnectorConnection } from './config';
 import {
@@ -23,7 +23,7 @@ export function registerWorkspaceConnectorCancellations(
 ): PluginCancellationRegistration[] {
   return [{
     workflowId: 'workspace-remote-session',
-    async cancel(input) {
+    cancel: input => withWorkspacePrivateSessionLock(context, input.actorIdentityId, async () => {
       if (!context.dataStore) return undefined;
       const session = await findWorkspaceMediaSession(
         context.dataStore,
@@ -73,6 +73,9 @@ export function registerWorkspaceConnectorCancellations(
         const retries = await workspaceMediaRetriesForSession(context.dataStore, session.sessionId);
         if (session.privatePromptSubjectId) {
           if (!context.flowEngine) throw new Error('Workspace private prompt cancellation requires FlowEngine.');
+          // Keep outbox retries from reopening this remotely cancelled session, even if its
+          // original send succeeded but the separate provider receipt was not persisted.
+          await markWorkspacePrivateChoiceCompleted({ dataStore: context.dataStore }, session);
           await context.flowEngine.cancelPromptBySubject({
             purpose: WORKSPACE_PRIVATE_CHOICE_PURPOSE, subjectId: session.privatePromptSubjectId, includeLocked: true
           });
@@ -99,6 +102,6 @@ export function registerWorkspaceConnectorCancellations(
           reason: 'remote-cancellation-failed'
         };
       }
-    }
+    })
   }];
 }
