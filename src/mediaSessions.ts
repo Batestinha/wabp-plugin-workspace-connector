@@ -38,7 +38,7 @@ const storedSessionV1Schema = z.object({
   mediaMessageIds: z.array(z.string().min(1).max(512)).max(1_000)
 }).strict();
 
-const storedSessionV2Schema = z.object({
+export const storedSessionV2Schema = z.object({
   schemaVersion: z.literal(2),
   sessionId: z.string().min(1).max(512),
   capabilityId: z.string().min(1).max(160),
@@ -62,6 +62,7 @@ const storedSessionV2Schema = z.object({
   scopeEvidence: WorkspaceConnectorScopeEvidenceV2Schema,
   locale: z.string().trim().min(2).max(35),
   choices: z.array(choiceSchema).max(64),
+  privatePromptSubjectId: z.string().min(1).max(512).optional(),
   acceptedMessageKinds: z.array(z.enum(['document', 'image', 'video', 'audio'])).min(1).max(4).optional(),
   acceptedMimeTypes: z.array(z.string().min(1).max(160)).min(1).max(64).optional(),
   maximumFileBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
@@ -323,7 +324,7 @@ export async function refreshWorkspaceSessionActionsV2(
   return updated;
 }
 
-async function storeWorkspaceSession(
+export async function storeWorkspaceSession(
   store: PluginDataStore,
   session: StoredWorkspaceMediaSession
 ): Promise<void> {

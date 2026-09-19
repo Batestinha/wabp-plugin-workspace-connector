@@ -21,6 +21,8 @@ export const workspaceConnectorMessages = {
   'official.workspace-connector.unknownCapability': 'That capability is not published or allowed for this scope.',
   'official.workspace-connector.usage': 'Usage: /workspace <capability> [arguments]',
   'official.workspace-connector.invalidChoice': 'Reply with one of the numbered choices shown for the active Workspace request.',
+  'official.workspace-connector.resumePrivatePrompt': 'Review the previous request in this chat, then choose an option to continue the pending Workspace request.',
+  'official.workspace-connector.resumePrivateTextPrompt': 'Review the previous request in this chat, then reply to continue the pending Workspace request.',
   'official.workspace-connector.mediaRejected': 'This file type is not accepted by the active Workspace request.',
   'official.workspace-connector.mediaTooLarge': 'This file is larger than the active Workspace request allows.',
   'official.workspace-connector.mediaLimitReached': 'The active Workspace request has already received the maximum number of files.',

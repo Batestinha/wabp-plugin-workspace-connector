@@ -1,6 +1,7 @@
 import type { PluginCancellationRegistration } from '@wabs/plugin-sdk/cancellations';
 import type { PluginCommandContext } from './runtime';
 import { WorkspaceConnectorClient } from './client';
+import { WORKSPACE_PRIVATE_CHOICE_PURPOSE } from './privatePrompts';
 import { renderWorkspaceActions } from './commands';
 import { workspaceConnectorConnection } from './config';
 import {
@@ -70,6 +71,12 @@ export function registerWorkspaceConnectorCancellations(
           };
         }
         const retries = await workspaceMediaRetriesForSession(context.dataStore, session.sessionId);
+        if (session.privatePromptSubjectId) {
+          if (!context.flowEngine) throw new Error('Workspace private prompt cancellation requires FlowEngine.');
+          await context.flowEngine.cancelPromptBySubject({
+            purpose: WORKSPACE_PRIVATE_CHOICE_PURPOSE, subjectId: session.privatePromptSubjectId, includeLocked: true
+          });
+        }
         await Promise.all([
           forgetWorkspaceMediaSession(context.dataStore, session),
           ...retries.map(async (retry) => {

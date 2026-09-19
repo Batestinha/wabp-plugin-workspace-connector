@@ -19,6 +19,8 @@
   "official.workspace-connector.unknownCapability": "Essa capacidade não está publicada ou autorizada para este âmbito.",
   "official.workspace-connector.usage": "Utilização: /workspace <capacidade> [argumentos]",
   "official.workspace-connector.invalidChoice": "Responde com uma das opções numeradas apresentadas para o pedido ativo do Espaço de Trabalho.",
+  "official.workspace-connector.resumePrivatePrompt": "Revê o pedido anterior nesta conversa e escolhe uma opção para continuar o pedido pendente do Espaço de Trabalho.",
+  "official.workspace-connector.resumePrivateTextPrompt": "Revê o pedido anterior nesta conversa e responde para continuar o pedido pendente do Espaço de Trabalho.",
   "official.workspace-connector.mediaRejected": "Este tipo de ficheiro não é aceite pelo pedido ativo do Espaço de Trabalho.",
   "official.workspace-connector.mediaTooLarge": "Este ficheiro excede o tamanho permitido pelo pedido ativo do Espaço de Trabalho.",
   "official.workspace-connector.mediaLimitReached": "O pedido ativo do Espaço de Trabalho já recebeu o número máximo de ficheiros.",

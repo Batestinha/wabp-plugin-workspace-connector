@@ -56,6 +56,8 @@ import {
 } from './mediaRetries';
 import { refreshWorkspaceScopeDirectory } from './scopeDirectory';
 import { refreshWorkspaceScopeMemberships } from './scopeMembershipDirectory';
+import { adoptWorkspacePrivateChoice, deliverWorkspacePrivateChoice, recoverWorkspacePrivateChoices,
+  registerWorkspacePrivateChoiceHandler, workspacePrivatePromptReceipt } from './privatePrompts';
 
 const DELIVERY_POLL_INTERVAL_MS = 15_000;
 const SCOPE_DIRECTORY_REFRESH_INTERVAL_MS = 60_000;
@@ -87,6 +89,10 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
   const connection = workspaceConnectorConnection(context.config);
   if (!connection) return {};
   const client = new WorkspaceConnectorClient(connection);
+  registerWorkspacePrivateChoiceHandler(context, client, connection.installationId);
+  const recoveringPrivateChoices = recoverWorkspacePrivateChoices(context, connection.installationId).catch(error => {
+    context.logger.warn({ error }, 'Workspace private choice recovery failed');
+  });
   let polling = false;
   let scopeDirectoryRefresh: Promise<void> | undefined;
   let stopped = false;
@@ -190,6 +196,10 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
       return { scopeId: session.scopeId, groupWid: session.groupWid };
     },
     async onMessage(event) {
+      if (event.message.context === 'private' && !event.message.fromMe && !event.isCommandLike) {
+        await recoveringPrivateChoices;
+        if (await adoptWorkspacePrivateChoice(context, connection.installationId, event.actorIdentityId)) return;
+      }
       const sessionActions = await handleWorkspaceSessionMessage(
         context,
         client,
@@ -236,6 +246,7 @@ export async function handleWorkspaceSessionMessage(
   );
   if (!session) return;
   if (session.schemaVersion === 2) {
+    if (session.privatePromptSubjectId && !event.message.hasMedia) return;
     return handleWorkspaceSessionMessageV2(context, client, installationId, event, session);
   }
   if (event.message.hasMedia) {
@@ -437,6 +448,7 @@ export async function deliverWorkspaceDeliveryV2(
     | 'dataStore'
     | 'currentMemberIdentityIdsForScope'
     | 'i18n'
+    | 'flowEngine'
   >,
   client: Pick<WorkspaceConnectorClient, 'downloadGrantedMediaV2'> & Partial<Pick<WorkspaceConnectorClient, 'catalogV2'>>,
   delivery: WorkspaceConnectorDeliveryV2,
@@ -453,7 +465,7 @@ export async function deliverWorkspaceDeliveryV2(
   }
   try {
     if (delivery.action.kind === 'start_session') {
-      if (delivery.target.kind !== 'identity' || !context.resolveStableIdentityById || !client.catalogV2 || !context.sendText) {
+      if (delivery.target.kind !== 'identity' || !context.resolveStableIdentityById || !client.catalogV2 || !context.flowEngine) {
         return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'delivery.channel_unavailable');
       }
       const action = delivery.action;
@@ -464,9 +476,16 @@ export async function deliverWorkspaceDeliveryV2(
         || !catalog.capabilities.some(c => c.capabilityId === action.capabilityId && c.interfaces.includes('interactive')))
         return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'scope.unavailable');
       const actor = await context.resolveStableIdentityById(delivery.target.identityId);
+      if (actor.identityId !== delivery.target.identityId) return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'identity.unavailable');
       const members = await context.currentMemberIdentityIdsForScope?.(action.scopeId);
       const groups = await context.coveredGroupsForScope?.(action.scopeId);
       if (!members?.includes(actor.identityId) || !groups?.[0]) return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'scope.unavailable');
+      const promptKey = `workspace-v2:${delivery.idempotencyKey}`;
+      const receipt = await workspacePrivatePromptReceipt(context, promptKey, actor.identityId, action.session.sessionId);
+      if (receipt) return ackV2(delivery.deliveryId, 'delivered', receipt);
+      if ((await context.flowEngine.inspectIdentityFlowStart({ actorIdentityId: actor.identityId })).kind === 'conflict') {
+        return ackV2(delivery.deliveryId, 'retryable_failure', undefined, 'session.busy');
+      }
       const previous = await findWorkspaceMediaSession(context.dataStore, actor.identityId);
       if (previous && previous.sessionId !== action.session.sessionId) {
         // Never replace an upload or another conversation behind the user's back.
@@ -474,7 +493,7 @@ export async function deliverWorkspaceDeliveryV2(
       }
       const origin = { chatId: actor.deliveryChatId, surface: 'private' as const };
       const locale = (await context.i18n.resolveIdentityLocale(actor.identityId, action.scopeId)).locale;
-      await rememberWorkspaceSessionV2({
+      const session = await rememberWorkspaceSessionV2({
         store: context.dataStore,
         result: { protocolVersion: 2, invocationId: delivery.idempotencyKey, session: action.session,
           actions: [{ kind: 'choice', route: { kind: 'actor_private', fallback: 'none' }, prompt: action.prompt, choices: action.choices }] },
@@ -487,10 +506,9 @@ export async function deliverWorkspaceDeliveryV2(
         authenticatedInteractiveCapabilityIds: catalog.capabilities.filter(c => c.interfaces.includes('interactive')).map(c => c.capabilityId),
         scopeAllowedCapabilityIds: scoped.allowedCapabilities, locale,
       });
-      const sent = await context.sendText(actor.deliveryChatId,
-        [action.prompt, ...action.choices.map((choice, i) => `${i + 1}. ${choice.label}`)].join('\n'),
-        { idempotencyKey: `workspace-v2:${delivery.idempotencyKey}`, notAfter: new Date(delivery.expiresAt), waitForServerAck: true });
-      return ackV2(delivery.deliveryId, 'delivered', sent.messageId);
+      if (!session) throw new Error('Workspace private session was not persisted.');
+      const messageId = await deliverWorkspacePrivateChoice(context, session, action.prompt, promptKey, new Date(delivery.expiresAt));
+      return ackV2(delivery.deliveryId, 'delivered', messageId);
     }
     if (delivery.action.kind === 'media') {
       if (!context.sendMedia) {

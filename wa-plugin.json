@@ -4,7 +4,7 @@
   "name": "Workspace Connector",
   "description": "Connect managed WhatsApp scopes to capabilities declared by an external Workspace authority.",
   "kind": "managed_group",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "coreApiRange": "^0.3.9",
   "entrypoint": "dist/index.js",
   "messageNamespace": "official.workspace-connector",
