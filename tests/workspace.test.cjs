@@ -33,7 +33,7 @@ function catalog() {
 
 test('preserves scoped settings and rejects an unsafe deployment endpoint', () => {
   const value = { enabled: true, deliveryChatId: 'fixture@g.us', allowedCapabilities: ['fixture.submit.v1'] };
-  assert.deepEqual(plugin.manifest.configSchema.parse(value), { ...value, otpCodeSeparate: false, otpLoginExplanation: '', otpRecoveryExplanation: '' });
+  assert.deepEqual(plugin.manifest.configSchema.parse(value), { ...value, otpCodeSeparate: false, otpLoginExplanation: '', otpRecoveryExplanation: '', otpRegistrationExplanation: '' });
   assert.equal(plugin.manifest.configSchema.parse({ otpCodeSeparate: true }).otpCodeSeparate, true);
   assert.throws(() => plugin.manifest.configSchema.parse({ otpLoginExplanation: 'x'.repeat(401) }));
   assert.equal(workspaceConnectorConnection({}), undefined);
@@ -156,7 +156,7 @@ test('includes complete Portuguese messages and unmodified licensed protocol byt
   const metadata = require('../wa-plugin.json');
   const pt = require('../locales/pt-PT/official.workspace-connector.json');
   assert.equal(metadata.version, plugin.manifest.version);
-  assert.equal(metadata.operatorConsole.controls.length, 6);
+  assert.equal(metadata.operatorConsole.controls.length, 7);
   for (const key of Object.keys(plugin.manifest.defaultMessages)) assert.ok(pt[key]?.trim(), key);
   assert.deepEqual(fs.readFileSync('contracts/workspace-connector-v0.3.ts'), fs.readFileSync('src/contracts/workspace-connector-v0.3.ts'));
   assert.equal(plugin.lifecycle, undefined);

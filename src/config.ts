@@ -4,6 +4,7 @@ export const workspaceConnectorConfigSchema = z.object({
   enabled: z.boolean().default(false),
   otpCodeSeparate: z.boolean().default(false),
   otpLoginExplanation: z.string().trim().max(400).default(''),
+  otpRegistrationExplanation: z.string().trim().max(400).default(''),
   otpRecoveryExplanation: z.string().trim().max(400).default(''),
   deliveryChatId: z.union([
     z.literal(''),
