@@ -20,6 +20,8 @@ const promptRecordSchema = z.object({
   idempotencyKey: z.string().min(1),
   expiresAt: z.string().datetime(),
   result: WorkspaceConnectorInvocationResultV2Schema.optional(),
+  whatsappLinkReceived: z.boolean().optional(),
+  whatsappLinkCannotContinue: z.boolean().optional(),
   completed: z.boolean().optional()
 });
 type PromptRecord = z.infer<typeof promptRecordSchema>;
@@ -219,20 +221,39 @@ async function continuePrivateChoice(
     return true;
   }
   const actor = await context.resolveStableIdentityById?.(session.actorIdentityId);
-  const members = await context.currentMemberIdentityIdsForScope?.(session.scopeId);
-  const config = parseWorkspaceConnectorConfig(await context.configFor(session.scopeId));
-  if (!actor || actor.identityId !== session.actorIdentityId || actor.deliveryChatId !== session.actorPrivateChatId
-    || !members?.includes(actor.identityId) || !config.enabled
-    || !config.allowedCapabilities.includes(workspaceSessionContinuationCapabilityId(session))) {
+  if (!actor || actor.identityId !== session.actorIdentityId || actor.deliveryChatId !== session.actorPrivateChatId) {
     await engine.acknowledgePromptLock(lock.flowPromptId);
     return true;
   }
+  const capabilityId = workspaceSessionContinuationCapabilityId(session);
+  const isWhatsappLink = capabilityId === 'account.whatsapp-link.v1';
+  // A cached link result is already authoritative: replay it to the trusted actor even
+  // if policy later changes, without attempting another remote continuation.
+  if (!isWhatsappLink || !record.result) {
+    let cannotContinue = isWhatsappLink && record.whatsappLinkCannotContinue === true;
+    if (!cannotContinue) {
+      const members = await context.currentMemberIdentityIdsForScope?.(session.scopeId);
+      const config = parseWorkspaceConnectorConfig(await context.configFor(session.scopeId));
+      cannotContinue = !members?.includes(actor.identityId) || !config.enabled || !config.allowedCapabilities.includes(capabilityId);
+    }
+    if (cannotContinue) {
+      if (isWhatsappLink) {
+        await acknowledgeWhatsappLinkResponse(context, record, lock.flowPromptId, 'cannot-continue');
+        if (current?.sessionId === session.sessionId) await forgetWorkspaceMediaSession(context.dataStore, session);
+        await context.dataStore.set(lock.subjectId, { ...record, completed: true });
+      }
+      await engine.acknowledgePromptLock(lock.flowPromptId);
+      return true;
+    }
+  }
 
   if (!record.result) {
+    if (isWhatsappLink) {
+      await acknowledgeWhatsappLinkResponse(context, record, lock.flowPromptId, 'received');
+    }
     record.result = await client.continueSessionV2({
       protocolVersion: 2, installationId, catalogRevision: session.catalogRevision,
-      catalogDigestSha256: session.catalogDigestSha256, sessionId: session.sessionId,
-      capabilityId: workspaceSessionContinuationCapabilityId(session), scopeId: session.scopeId,
+      catalogDigestSha256: session.catalogDigestSha256, sessionId: session.sessionId, capabilityId, scopeId: session.scopeId,
       origin: session.origin, current: { chatId: session.actorPrivateChatId, surface: 'private' },
       scopeEvidence: { ...session.scopeEvidence, checkedAt: new Date().toISOString() }, locale: session.locale,
       eventId: `flow-prompt:${lock.flowPromptId}`, idempotencyKey: `workspace-choice-v2:${lock.flowPromptId}`,
@@ -289,4 +310,22 @@ async function continuePrivateChoice(
   await context.dataStore.set(lock.subjectId, { ...record, completed: true });
   await engine.acknowledgePromptLock(lock.flowPromptId);
   return true;
+}
+
+async function acknowledgeWhatsappLinkResponse(
+  context: PromptContext, record: PromptRecord, flowPromptId: string, outcome: 'received' | 'cannot-continue'
+): Promise<void> {
+  const field = outcome === 'received' ? 'whatsappLinkReceived' : 'whatsappLinkCannotContinue';
+  if (record[field]) return;
+  if (!context.sendText) throw new Error('Workspace reply delivery unavailable.');
+  const { session } = record;
+  const t = context.i18n.translator(session.locale);
+  const key = outcome === 'received'
+    ? 'official.workspace-connector.whatsappLink.received' : 'official.workspace-connector.whatsappLink.cannotContinue';
+  // Stable text and key preserve the transport's message identity across locked-prompt retries.
+  await context.sendText(session.actorPrivateChatId, t(key), {
+    idempotencyKey: `workspace-choice-v2:${flowPromptId}:${outcome}`, waitForServerAck: true
+  });
+  record[field] = true;
+  await context.dataStore.set(promptSubjectId(record.idempotencyKey), record);
 }

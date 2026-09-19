@@ -8,11 +8,12 @@ const { WorkspaceConnectorClient } = require('../dist/client');
 const { registerWorkspaceConnectorCancellations } = require('../dist/cancellations');
 const { workspaceConnectorCatalogDigestPreimage } = require('../dist/contracts/workspace-connector-v0.3');
 
-function fixture(t) {
+function fixture(t, { capabilityId = 'fixture.confirm.v1', locale = 'en' } = {}) {
   const rows = new Map(), prompts = [], sends = [], acknowledgements = [], callbacks = [];
   const locks = new Map(), promptDeliveries = new Map(), closedPrompts = new Set();
   let handler, handlerOptions;
-  const capabilityId = 'fixture.confirm.v1';
+  const messages = locale === 'pt-PT'
+    ? require('../locales/pt-PT/official.workspace-connector.json') : plugin.manifest.defaultMessages;
   const address = { identityId: 'person-1', deliveryChatId: 'person@lid', mentionWid: 'person@lid', phoneNumber: '351910000001' };
   const catalog = { protocolVersion: 2, workspaceId: 'workspace-1', workspaceLabel: 'Workspace', revision: 1,
     aliases: [], capabilities: [{ capabilityId, interfaces: ['interactive'], maximumPayloadBytes: 65536, mediaMimeTypes: [], cancellationSupported: true }] };
@@ -29,9 +30,9 @@ function fixture(t) {
     currentMemberIdentityIdsForScope: async () => [address.identityId],
     resolveStableIdentityById: async () => address,
     logger: { warn() {} },
-    i18n: { resolveIdentityLocale: async () => ({ locale: 'pt-PT' }),
-      translator: () => key => plugin.manifest.defaultMessages[key] ?? key,
-      translatorForIdentity: async () => key => plugin.manifest.defaultMessages[key] ?? key },
+    i18n: { resolveIdentityLocale: async () => ({ locale }),
+      translator: () => key => messages[key] ?? key,
+      translatorForIdentity: async () => key => messages[key] ?? key },
     sendText: async (...input) => { sends.push(input); return { messageId: `sent-${sends.length}` }; },
     flowEngine: {
       workflowRuntimeBindingId: 'runtime-1',
@@ -141,6 +142,218 @@ test('backend failure leaves the human choice locked for durable retry', async t
   assert.equal(f.callbacks[0].idempotencyKey, f.callbacks[1].idempotencyKey);
   assert.deepEqual(f.acknowledgements, ['prompt-1']);
 });
+
+test('WhatsApp linking sends no prompt if scope membership was removed before delivery', async t => {
+  const f = fixture(t, { capabilityId: 'account.whatsapp-link.v1' });
+  f.context.currentMemberIdentityIdsForScope = async () => [];
+  assert.equal((await f.start()).disposition, 'terminal_failure');
+  assert.equal(f.prompts.length, 0);
+  assert.equal(f.sends.length, 0);
+  assert.equal(await findWorkspaceMediaSession(f.context.dataStore, 'person-1'), undefined);
+});
+
+for (const [locale, text] of [
+  ['en', 'I received your response. I am checking the link.'],
+  ['pt-PT', 'Recebi a tua resposta. Estou a verificar a associação.'],
+]) {
+  test(`WhatsApp linking waits for the ${locale} receipt acknowledgement before continuing`, async t => {
+    const f = fixture(t, { capabilityId: 'account.whatsapp-link.v1', locale });
+    await f.start();
+    let entered, release;
+    const sending = new Promise(resolve => { entered = resolve; });
+    const acknowledged = new Promise(resolve => { release = resolve; });
+    const send = f.context.sendText;
+    f.context.sendText = async (...input) => {
+      const result = await send(...input);
+      if (f.sends.length === 1) { entered(); await acknowledged; }
+      return result;
+    };
+    const continuation = f.handle(f.lock());
+    await sending;
+    const beforeAck = [...f.callbacks];
+    const firstMessage = f.sends[0];
+    release();
+    await continuation;
+    assert.deepEqual(beforeAck, []);
+    assert.deepEqual(firstMessage, ['person@lid', text,
+      { idempotencyKey: 'workspace-choice-v2:prompt-1:received', waitForServerAck: true }]);
+    assert.equal(f.callbacks.length, 1);
+    assert.equal(f.sends[1][1], 'Confirmed.');
+    assert.equal(f.sends[1][2].idempotencyKey, 'workspace-choice-v2:prompt-1:reply:0');
+    assert.deepEqual(f.acknowledgements, ['prompt-1']);
+  });
+}
+
+test('a WhatsApp backend retry skips the already acknowledged receipt after restart and locale drift', async t => {
+  const f = fixture(t, { capabilityId: 'account.whatsapp-link.v1' });
+  const attempts = [];
+  const send = f.context.sendText;
+  f.context.sendText = async (...input) => {
+    const key = input[2]?.idempotencyKey;
+    assert.ok(key);
+    attempts.push(key);
+    return send(...input);
+  };
+  t.mock.method(WorkspaceConnectorClient.prototype, 'continueSessionV2', async input => {
+    f.callbacks.push(input);
+    if (f.callbacks.length === 1) throw new Error('503 backend unavailable');
+    return { protocolVersion: 2, invocationId: 'done', actions: [
+      { kind: 'complete', route: { kind: 'actor_private', fallback: 'none' }, text: 'Confirmed.' },
+    ] };
+  });
+  await f.start();
+  const lock = f.lock();
+  await assert.rejects(f.handle(lock), /503/);
+  assert.equal(f.sends.length, 1);
+  assert.equal(f.sends[0][1], 'I received your response. I am checking the link.');
+  assert.ok(f.locks.has(lock.flowPromptId));
+  assert.deepEqual(f.acknowledgements, []);
+  await f.restart();
+  f.context.i18n.translatorForIdentity = async () => key => require('../locales/pt-PT/official.workspace-connector.json')[key];
+  await f.handle(lock);
+  assert.equal(f.sends.length, 2);
+  assert.equal(f.sends[1][1], 'Confirmed.');
+  assert.deepEqual(attempts, ['workspace-choice-v2:prompt-1:received', 'workspace-choice-v2:prompt-1:reply:0']);
+  assert.equal(f.callbacks[0].idempotencyKey, f.callbacks[1].idempotencyKey);
+  assert.deepEqual(f.acknowledgements, ['prompt-1']);
+});
+
+test('a WhatsApp receipt send failure keeps the choice locked without invoking the backend', async t => {
+  const f = fixture(t, { capabilityId: 'account.whatsapp-link.v1' });
+  await f.start();
+  const lock = f.lock();
+  const send = f.context.sendText;
+  f.context.sendText = async () => { throw new Error('receipt send unavailable'); };
+  await assert.rejects(f.handle(lock), /receipt send unavailable/);
+  assert.equal(f.callbacks.length, 0);
+  assert.ok(f.locks.has(lock.flowPromptId));
+  assert.deepEqual(f.acknowledgements, []);
+  assert.equal((await f.context.dataStore.get(lock.subjectId)).whatsappLinkReceived, undefined);
+  f.context.sendText = send;
+  await f.handle(lock);
+  assert.equal(f.callbacks.length, 1);
+  assert.equal(f.sends[0][1], 'I received your response. I am checking the link.');
+  assert.equal((await f.context.dataStore.get(lock.subjectId)).whatsappLinkReceived, true);
+});
+
+for (const outcome of ['received', 'cannot-continue']) {
+  test(`a failed ${outcome} flag write replays the same acknowledgement without false completion`, async t => {
+    const f = fixture(t, { capabilityId: 'account.whatsapp-link.v1' });
+    await f.start();
+    const lock = f.lock();
+    if (outcome === 'cannot-continue') f.context.currentMemberIdentityIdsForScope = async () => [];
+    const field = outcome === 'received' ? 'whatsappLinkReceived' : 'whatsappLinkCannotContinue';
+    const persist = f.context.dataStore.set;
+    f.context.dataStore.set = async (key, value) => {
+      if (key === lock.subjectId && value[field]) throw new Error('acknowledgement persistence unavailable');
+      return persist(key, value);
+    };
+    await assert.rejects(f.handle(lock), /acknowledgement persistence unavailable/);
+    assert.equal(f.sends.length, 1);
+    assert.equal(f.callbacks.length, 0);
+    assert.equal((await f.context.dataStore.get(lock.subjectId))[field], undefined);
+    assert.ok(f.locks.has(lock.flowPromptId));
+    assert.ok(await findWorkspaceMediaSession(f.context.dataStore, 'person-1'));
+    f.context.dataStore.set = persist;
+    f.context.i18n.translatorForIdentity = async () => key => require('../locales/pt-PT/official.workspace-connector.json')[key];
+    await f.handle(lock);
+    assert.deepEqual(f.sends[1], f.sends[0]);
+    assert.equal(f.sends[0][2].idempotencyKey, `workspace-choice-v2:prompt-1:${outcome}`);
+    assert.equal((await f.context.dataStore.get(lock.subjectId))[field], true);
+    assert.deepEqual(f.acknowledgements, ['prompt-1']);
+  });
+}
+
+test('a policy cleanup retry does not resend its acknowledged failure or complete before forgetting the session', async t => {
+  const f = fixture(t, { capabilityId: 'account.whatsapp-link.v1' });
+  await f.start();
+  const lock = f.lock();
+  f.context.currentMemberIdentityIdsForScope = async () => [];
+  const forget = f.context.dataStore.delete;
+  f.context.dataStore.delete = async () => { throw new Error('session cleanup unavailable'); };
+  await assert.rejects(f.handle(lock), /session cleanup unavailable/);
+  assert.equal(f.sends.length, 1);
+  const record = await f.context.dataStore.get(lock.subjectId);
+  assert.equal(record.whatsappLinkCannotContinue, true);
+  assert.notEqual(record.completed, true);
+  assert.ok(f.locks.has(lock.flowPromptId));
+  f.context.dataStore.delete = forget;
+  // A terminal refusal already delivered must stay terminal even if membership returns.
+  f.context.currentMemberIdentityIdsForScope = async () => ['person-1'];
+  await f.handle(lock);
+  assert.equal(f.sends.length, 1);
+  assert.equal(f.callbacks.length, 0);
+  assert.equal(await findWorkspaceMediaSession(f.context.dataStore, 'person-1'), undefined);
+  assert.equal((await f.context.dataStore.get(lock.subjectId)).completed, true);
+});
+
+test('a cached WhatsApp completion is delivered after policy drift without another backend call', async t => {
+  const f = fixture(t, { capabilityId: 'account.whatsapp-link.v1' });
+  await f.start();
+  const lock = f.lock();
+  const send = f.context.sendText;
+  f.context.sendText = async (...input) => {
+    if (input[2]?.idempotencyKey.endsWith(':reply:0')) throw new Error('final acknowledgement unavailable');
+    return send(...input);
+  };
+  await assert.rejects(f.handle(lock), /final acknowledgement unavailable/);
+  assert.equal(f.callbacks.length, 1);
+  assert.equal(f.sends.length, 1);
+  f.context.currentMemberIdentityIdsForScope = async () => [];
+  f.context.configFor = async () => ({ enabled: false, allowedCapabilities: [] });
+  f.context.sendText = send;
+  await f.handle(lock);
+  assert.equal(f.callbacks.length, 1);
+  assert.equal(f.sends.length, 2);
+  assert.equal(f.sends[1][1], 'Confirmed.');
+  assert.deepEqual(f.acknowledgements, ['prompt-1']);
+  assert.equal(await findWorkspaceMediaSession(f.context.dataStore, 'person-1'), undefined);
+});
+
+for (const change of ['scope', 'capability', 'disabled']) {
+  test(`WhatsApp linking acknowledges ${change} policy loss before consuming a trusted reply`, async t => {
+    const f = fixture(t, { capabilityId: 'account.whatsapp-link.v1', locale: 'pt-PT' });
+    await f.start();
+    if (change === 'scope') f.context.currentMemberIdentityIdsForScope = async () => [];
+    if (change === 'capability') f.context.configFor = async () => ({ enabled: true, allowedCapabilities: [] });
+    if (change === 'disabled') f.context.configFor = async () => ({ enabled: false, allowedCapabilities: ['account.whatsapp-link.v1'] });
+    const send = f.context.sendText;
+    const lock = f.lock();
+    f.context.sendText = async () => { throw new Error('policy acknowledgement unavailable'); };
+    await assert.rejects(f.handle(lock), /policy acknowledgement unavailable/);
+    assert.ok(f.locks.has(lock.flowPromptId));
+    assert.ok(await findWorkspaceMediaSession(f.context.dataStore, 'person-1'));
+    f.context.sendText = async (...input) => {
+      assert.deepEqual(f.acknowledgements, []);
+      return send(...input);
+    };
+    await f.handle(lock);
+    assert.equal(f.callbacks.length, 0);
+    assert.deepEqual(f.sends, [['person@lid', 'Recebi a tua resposta, mas já não é possível continuar esta associação.',
+      { idempotencyKey: 'workspace-choice-v2:prompt-1:cannot-continue', waitForServerAck: true }]]);
+    assert.deepEqual(f.acknowledgements, ['prompt-1']);
+    assert.equal(await findWorkspaceMediaSession(f.context.dataStore, 'person-1'), undefined);
+    assert.equal((await f.context.dataStore.get(lock.subjectId)).completed, true);
+    f.context.currentMemberIdentityIdsForScope = async () => ['person-1'];
+    f.context.configFor = async () => ({ enabled: true, allowedCapabilities: ['account.whatsapp-link.v1'] });
+    f.delivery.action.session.sessionId = 'new-link-session';
+    f.delivery.idempotencyKey = 'new-link-delivery';
+    assert.equal((await f.start()).disposition, 'delivered');
+    assert.equal(f.prompts.length, 2);
+  });
+}
+
+for (const change of ['identity', 'chat']) {
+  test(`WhatsApp linking sends no acknowledgement to an untrusted ${change} binding`, async t => {
+    const f = fixture(t, { capabilityId: 'account.whatsapp-link.v1' });
+    await f.start();
+    f.context.resolveStableIdentityById = async () => ({ ...f.address,
+      ...(change === 'identity' ? { identityId: 'wrong-person' } : { deliveryChatId: 'other@lid' }) });
+    await f.handle(f.lock());
+    assert.equal(f.sends.length, 0);
+    assert.equal(f.callbacks.length, 0);
+  });
+}
 
 for (const change of ['identity', 'scope', 'session', 'choice', 'runtime']) {
   test(`rejects ${change} drift before the remote continuation`, async t => {

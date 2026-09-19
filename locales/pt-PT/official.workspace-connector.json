@@ -1,4 +1,6 @@
 {
+  "official.workspace-connector.whatsappLink.received": "Recebi a tua resposta. Estou a verificar a associação.",
+  "official.workspace-connector.whatsappLink.cannotContinue": "Recebi a tua resposta, mas já não é possível continuar esta associação.",
   "official.workspace-connector.description": "Liga este bot a uma autoridade de Espaço de Trabalho externo sem incorporar regras de negócio específicas de aplicações.",
   "official.workspace-connector.help.family": "Espaço de Trabalho",
   "official.workspace-connector.help.feature.title": "Conector do Espaço de Trabalho",
