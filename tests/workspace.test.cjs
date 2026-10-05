@@ -7,6 +7,7 @@ const { workspaceConnectorConnection } = require('../dist/config');
 const { rememberWorkspaceSession, findWorkspaceMediaSession } = require('../dist/mediaSessions');
 const { handleWorkspaceSessionMessage } = require('../dist/hooks');
 const { createWorkspaceConnectorHooks } = require('../dist/hooks');
+const { publishCapabilityOptions } = require('../dist/capabilityOptions');
 const connection = { baseUrl: 'https://workspace.example', oidcIssuer: 'https://identity.example/realms/fixture',
   clientId: 'fixture', clientSecret: 'fixture', audience: 'fixture-api', installationId: 'fixture-installation' };
 const t = (key) => plugin.manifest.defaultMessages[key] ?? key;
@@ -39,6 +40,27 @@ test('preserves scoped settings and rejects an unsafe deployment endpoint', () =
   assert.equal(workspaceConnectorConnection({}), undefined);
   assert.throws(() => workspaceConnectorConnection({ WORKSPACE_CONNECTOR_BASE_URL: 'http://workspace.example' }), /canonical HTTPS/);
   assert.throws(() => workspaceConnectorConnection({ WORKSPACE_CONNECTOR_BASE_URL: 'https://workspace.example/?redirect=elsewhere' }), /canonical HTTPS/);
+});
+
+test('publishes account and installation bound capability selector options', async () => {
+  const dataStore = storeFrom();
+  const ctx = context(dataStore);
+  ctx.config = { WHATSAPP_ACCOUNT_ID: 'account-one' };
+  await publishCapabilityOptions(ctx, connection, catalog(), {
+    protocolVersion: 2, workspaceId: 'fixture-workspace', workspaceLabel: 'Fixture workspace', revision: 8,
+    aliases: [{ namespace: 'register', capabilityId: 'account.registration.v1', contexts: ['private'],
+      descriptionByLocale: { en: 'Register an account', 'pt-PT': 'Registar uma conta' },
+      usageByLocale: { en: '/register', 'pt-PT': '/register' } }],
+    capabilities: [{ capabilityId: 'account.registration.v1', interfaces: ['interactive'], maximumPayloadBytes: 8192,
+      mediaMimeTypes: [], cancellationSupported: false }], ambientTriggers: [], digestSha256: digest
+  });
+  const [[key, snapshot]] = [...dataStore.rows];
+  assert.match(key, /^capability-options:v1:account-one:fixture-installation$/);
+  assert.equal(snapshot.accountId, 'account-one');
+  assert.deepEqual(snapshot.options.find(option => option.value === 'account.registration.v1'), {
+    value: 'account.registration.v1', label: 'Register an account', reference: 'account.registration.v1',
+    searchText: 'account.registration.v1 Register an account Register an account Registar uma conta'
+  });
 });
 
 test('registers commands, cancellations and hooks without deployment credentials or network work', async () => {

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { publishCapabilityOptions } from './capabilityOptions';
 import type { CommandMetadata } from '@wabs/plugin-sdk/command-metadata';
 import type { CommandContext } from '@wabs/plugin-sdk/commands';
 import {
@@ -101,16 +102,19 @@ export async function registerWorkspaceConnectorCommands(context: PluginCommandC
       const client = new WorkspaceConnectorClient(connection);
       const v1 = await client.catalog();
       let v2 = installed?.v2;
+      let freshV2: WorkspaceConnectorCatalogV2 | undefined;
       try {
         const candidate = await client.catalogV2();
         assertV2CatalogDigest(candidate);
         v2 = candidate;
+        freshV2 = candidate;
       } catch {
         // v2 is additive. A deployment that has not exposed it yet retains the
         // last validated v2 catalog while calendar v1 continues normally.
       }
       installed = { v1, ...(v2 ? { v2 } : {}) };
       await installCatalogAliases(context, runtime, installed);
+      if (freshV2) await publishCapabilityOptions(context, connection, v1, freshV2);
     } catch {
       // A remote outage retains the last atomically installed catalogs and the
       // /workspace recovery namespace.

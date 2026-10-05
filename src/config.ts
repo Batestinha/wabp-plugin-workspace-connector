@@ -58,6 +58,7 @@ function canonicalHttpsBaseUrl(input: string | undefined): string {
 }
 
 export interface WorkspaceConnectorDeploymentConfig {
+  WHATSAPP_ACCOUNT_ID?: string | undefined;
   WORKSPACE_CONNECTOR_BASE_URL?: string | undefined;
   WORKSPACE_CONNECTOR_OIDC_ISSUER?: string | undefined;
   WORKSPACE_CONNECTOR_OIDC_AUDIENCE?: string | undefined;
