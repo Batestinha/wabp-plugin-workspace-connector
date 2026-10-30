@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
+import { createWriteStream } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -21,6 +21,7 @@ import type { PluginRuntimeContext } from './runtime';
 import { enqueuePluginJob } from '@wabs/plugin-sdk/jobs';
 import type { PluginJobEvent, PluginMessageEvent, PluginRuntimeHooks } from '@wabs/plugin-sdk/hooks';
 import { WorkspaceConnectorClient } from './client';
+import { openFileUpload } from './fileUpload';
 import {
   renderWorkspaceActions,
   assertV2CatalogDigest,
@@ -709,7 +710,7 @@ async function handleMediaMessageV1(
   } catch (error) {
     retry = rescheduleWorkspaceMediaRetry(retry);
     await storeWorkspaceMediaRetry(context.dataStore, retry);
-    context.logger.warn({ error, sessionId: activeSession.sessionId }, 'Workspace media upload failed');
+    context.logger.warn({ err: error, sessionId: activeSession.sessionId }, 'Workspace media upload failed');
     return [await reply(context, event, 'official.workspace-connector.mediaUnavailable')];
   }
 }
@@ -814,7 +815,7 @@ async function handleMediaMessageV2(
   } catch (error) {
     retry = rescheduleWorkspaceMediaRetry(retry);
     await storeWorkspaceMediaRetry(context.dataStore, retry);
-    context.logger.warn({ error, sessionId: activeSession.sessionId }, 'Workspace v2 media upload failed');
+    context.logger.warn({ err: error, sessionId: activeSession.sessionId }, 'Workspace v2 media upload failed');
     return [await reply(context, event, 'official.workspace-connector.mediaUnavailable')];
   }
 }
@@ -897,7 +898,7 @@ async function retryStagedMedia(
       }
     } catch (error) {
       await storeWorkspaceMediaRetry(context.dataStore, rescheduleWorkspaceMediaRetry(retry));
-      context.logger.warn({ error, sessionId: retry.sessionId }, 'Workspace staged-media retry failed');
+      context.logger.warn({ err: error, sessionId: retry.sessionId }, 'Workspace staged-media retry failed');
     }
   }
 }
@@ -926,11 +927,17 @@ async function transferStagedMedia(
   retry: WorkspaceMediaRetry
 ) {
   if (!context.mediaStore) throw new Error('Workspace media store is unavailable.');
-  const storedFile = context.mediaStore.openFile ? await context.mediaStore.openFile(retry.mediaId) : undefined;
-  const body = storedFile
-    ? Readable.toWeb(createReadStream(storedFile.path)) as ReadableStream<Uint8Array>
-    : (await context.mediaStore.read(retry.mediaId))?.buffer;
-  if (!body) throw new Error('Workspace staged media is unavailable.');
+  const upload = async <T>(send: (body: Buffer | ReadableStream<Uint8Array>) => Promise<T>) => {
+    const storedFile = context.mediaStore!.openFile ? await context.mediaStore!.openFile(retry.mediaId) : undefined;
+    const file = storedFile ? await openFileUpload(storedFile.path) : undefined;
+    try {
+      const body = file?.body ?? (await context.mediaStore!.read(retry.mediaId))?.buffer;
+      if (!body) throw new Error('Workspace staged media is unavailable.');
+      return await send(body);
+    } finally {
+      await file?.close();
+    }
+  };
   if (retry.schemaVersion === 1) {
     const grant = await client.requestMediaGrant({
       protocolVersion: 1,
@@ -940,7 +947,7 @@ async function transferStagedMedia(
       fileId: retry.fileId,
       metadata: retry.metadata
     });
-    return client.uploadGrantedMedia(grant, body);
+    return upload(body => client.uploadGrantedMedia(grant, body));
   }
   if (!client.requestMediaGrantV2 || !client.uploadGrantedMediaV2) {
     throw new Error('Workspace connector v2 media client is unavailable.');
@@ -953,7 +960,7 @@ async function transferStagedMedia(
     fileId: retry.fileId,
     metadata: retry.metadata
   });
-  return client.uploadGrantedMediaV2(grant, body);
+  return upload(body => client.uploadGrantedMediaV2!(grant, body));
 }
 
 async function enqueueWorkspaceAmbientEvent(
