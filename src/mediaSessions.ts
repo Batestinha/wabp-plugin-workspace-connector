@@ -62,6 +62,7 @@ export const storedSessionV2Schema = z.object({
   scopeEvidence: WorkspaceConnectorScopeEvidenceV2Schema,
   locale: z.string().trim().min(2).max(35),
   choices: z.array(choiceSchema).max(64),
+  selectionRule: z.enum(['SINGLE', 'MULTIPLE']).optional(),
   privatePromptSubjectId: z.string().min(1).max(512).optional(),
   acceptedMessageKinds: z.array(z.enum(['document', 'image', 'video', 'audio'])).min(1).max(4).optional(),
   acceptedMimeTypes: z.array(z.string().min(1).max(160)).min(1).max(64).optional(),
@@ -224,6 +225,7 @@ export async function rememberWorkspaceSessionV2(input: {
     scopeEvidence: input.scopeEvidence,
     locale: input.locale,
     choices: choice?.choices ?? [],
+    ...(choice?.selectionRule ? { selectionRule: choice.selectionRule } : {}),
     ...(request ? {
       acceptedMessageKinds: request.acceptedMessageKinds,
       acceptedMimeTypes: request.acceptedMimeTypes,

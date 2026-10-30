@@ -113,7 +113,9 @@ async function persistWorkspacePrivatePromptReceipt(context: PromptDeliveryConte
     question: prompt, options: session.choices,
     ...(session.choices.length ? {} : { freeTextOption: { id: 'workspace-text' } }),
     recipientWids: [session.actorPrivateChatId], eligibleVoterIdentityIds: [session.actorIdentityId],
-    selectionRule: 'SINGLE', presentation: 'text', announceLock: false,
+    selectionRule: session.selectionRule ?? 'SINGLE',
+    ...(session.selectionRule === 'MULTIPLE' ? { minSelections: 1, maxSelections: session.choices.length } : {}),
+    presentation: 'text', announceLock: false,
     expiresAt: new Date(Math.min(expiresAt.getTime(), new Date(session.expiresAt).getTime())),
     questionSendOptions: { idempotencyKey: `workspace-private:${engine.workflowRuntimeBindingId}:${idempotencyKey}`,
       notAfter: expiresAt, waitForServerAck: true },
@@ -204,9 +206,11 @@ async function continuePrivateChoice(
   if (!parsed.success) return false;
   const record = parsed.data, session = record.session;
   if (session.privatePromptSubjectId !== lock.subjectId || session.actorIdentityId !== lock.voterIdentityId
-    || lock.selectionRule !== 'SINGLE' || lock.selectedOptions.length !== 1) return false;
+    || lock.selectionRule !== (session.selectionRule ?? 'SINGLE') || !lock.selectedOptions.length
+    || (lock.selectionRule === 'SINGLE' && lock.selectedOptions.length !== 1)
+    || new Set(lock.selectedOptions.map(option => option.id)).size !== lock.selectedOptions.length) return false;
   const choice = lock.selectedOptions[0]!;
-  if (session.choices.length ? !session.choices.some(option => option.id === choice.id)
+  if (session.choices.length ? !lock.selectedOptions.every(selected => session.choices.some(option => option.id === selected.id))
     : choice.id !== 'workspace-text' || choice.isFreeText !== true || !choice.label.trim()) return false;
   if (record.completed) { await engine.acknowledgePromptLock(lock.flowPromptId); return true; }
 
@@ -263,7 +267,10 @@ async function continuePrivateChoice(
       actor: { identityId: actor.identityId, ...(actor.phoneNumber ? {
         verifiedWhatsappNumber: actor.phoneNumber.startsWith('+') ? actor.phoneNumber : `+${actor.phoneNumber}`
       } : {}) }, input: session.choices.length
-        ? { kind: 'choice', choiceId: choice.id } : { kind: 'text', text: choice.label }
+        ? session.selectionRule === 'MULTIPLE'
+          ? { kind: 'choices', choiceIds: lock.selectedOptions.map(option => option.id) }
+          : { kind: 'choice', choiceId: choice.id }
+        : { kind: 'text', text: choice.label }
       });
     } catch (error) {
       if (capabilityId === 'gallery.media.upload.v1' && !record.failureNotified && context.sendText) {

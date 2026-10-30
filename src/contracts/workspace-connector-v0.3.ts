@@ -416,6 +416,8 @@ export const WorkspaceConnectorInvocationV2Schema = z.object({
 export const WorkspaceConnectorSessionInputV2Schema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('text'), text: z.string().max(8_000) }).strict(),
   z.object({ kind: z.literal('choice'), choiceId: opaqueId }).strict(),
+  z.object({ kind: z.literal('choices'), choiceIds: z.array(opaqueId).min(1).max(64)
+    .refine(value => new Set(value).size === value.length, { message: 'choice IDs must be unique' }) }).strict(),
   z.object({ kind: z.literal('cancel'), reason: z.enum(['user', 'cutover', 'expired']) }).strict(),
   z.object({ kind: z.literal('timer'), timerId: opaqueId, firedAt: z.string().datetime() }).strict()
 ]);
@@ -477,6 +479,7 @@ const choiceActionV2 = z.object({
   kind: z.literal('choice'),
   route: WorkspaceConnectorActionRouteV2Schema,
   prompt: z.string().min(1).max(4_000),
+  selectionRule: z.enum(['SINGLE', 'MULTIPLE']).optional(),
   choices: z.array(z.object({
     id: opaqueId,
     label: z.string().min(1).max(240)

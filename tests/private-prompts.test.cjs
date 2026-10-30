@@ -695,3 +695,26 @@ test('Gallery backend failures notify once and recover the exact locked answer',
   assert.equal(calls[2].idempotencyKey, calls[0].idempotencyKey);
   assert.deepEqual(f.acknowledgements, ['prompt-1']);
 });
+
+test('multiple participant choices stay bound to one durable prompt and one atomic continuation', async t => {
+  const f = fixture(t, { capabilityId: 'gallery.media.upload.v1' });
+  t.mock.method(WorkspaceConnectorClient.prototype, 'continueSessionV2', async input => {
+    f.callbacks.push(input);
+    return f.callbacks.length === 1
+      ? { protocolVersion: 2, invocationId: 'people', session: { sessionId: 'remote-session-1', expiresAt: '2099-01-01T00:00:00.000Z' },
+          actions: [{ kind: 'choice', route: { kind: 'origin' }, prompt: 'Choose people', selectionRule: 'MULTIPLE',
+            choices: [{ id: 'person:1', label: 'One' }, { id: 'person:2', label: 'Two' }, { id: 'done', label: 'Done' }] }] }
+      : { protocolVersion: 2, invocationId: 'complete', actions: [{ kind: 'complete', route: { kind: 'origin' }, text: 'Done' }] };
+  });
+  await f.start(); await f.handle(f.lock());
+  const prompt = f.prompts.at(-1);
+  assert.equal(prompt.selectionRule, 'MULTIPLE');
+  assert.equal(prompt.maxSelections, 3);
+  const lock = { ...f.lock(), selectionRule: 'MULTIPLE', selectedOptions: prompt.options.slice(0, 2).map((option,index) => ({ ...option, number: index+1 })) };
+  f.locks.set(lock.flowPromptId, lock);
+  await f.handle(lock);
+  assert.deepEqual(f.callbacks[1].input, { kind: 'choices', choiceIds: ['person:1', 'person:2'] });
+  assert.equal(f.callbacks.length, 2);
+  await f.handle(lock);
+  assert.equal(f.callbacks.length, 2);
+});
