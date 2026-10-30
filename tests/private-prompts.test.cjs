@@ -718,3 +718,18 @@ test('multiple participant choices stay bound to one durable prompt and one atom
   await f.handle(lock);
   assert.equal(f.callbacks.length, 2);
 });
+
+test('numbered multiple selections also work for sessions delivered without a private host prompt', async t => {
+  const f = fixture(t, { capabilityId: 'gallery.media.upload.v1' });
+  await f.start();
+  const current = await findWorkspaceMediaSession(f.context.dataStore, 'person-1');
+  const { privatePromptSubjectId, ...session } = current;
+  await require('../dist/mediaSessions').storeWorkspaceSession(f.context.dataStore, { ...session,
+    selectionRule: 'MULTIPLE', choices: [{ id: 'person:1', label: 'One' }, { id: 'person:2', label: 'Two' }] });
+  const requests = [];
+  await handleWorkspaceSessionMessage(f.context, { continueSessionV2: async input => {
+    requests.push(input); return { protocolVersion: 2, invocationId: input.eventId, actions: [] };
+  } }, 'installation-1', { actorIdentityId: 'person-1', actor: { identityAddress: f.address }, isCommandLike: false,
+    message: { id: 'multi-reply', body: '1, 2', hasMedia: false, fromMe: false, context: 'private', chatId: 'person@lid' } });
+  assert.deepEqual(requests[0].input, { kind: 'choices', choiceIds: ['person:1', 'person:2'] });
+});

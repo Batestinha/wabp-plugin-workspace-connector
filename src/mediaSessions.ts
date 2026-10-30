@@ -311,6 +311,7 @@ export async function refreshWorkspaceSessionActionsV2(
   const parsed = storedSessionSchema.parse({
     ...withoutRequest,
     choices: choice?.choices ?? [],
+    ...(choice ? { selectionRule: choice.selectionRule ?? 'SINGLE' } : {}),
     ...(request ? {
       acceptedMessageKinds: request.acceptedMessageKinds,
       acceptedMimeTypes: request.acceptedMimeTypes,

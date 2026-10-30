@@ -325,7 +325,8 @@ async function handleWorkspaceSessionMessageV2(
   const choiceId = session.choices.length > 0
     ? resolveWorkspaceChoice(session.choices, body)
     : undefined;
-  if (session.choices.length > 0 && !choiceId) {
+  const choiceIds = session.selectionRule === 'MULTIPLE' ? resolveWorkspaceChoices(session.choices, body) : undefined;
+  if (session.choices.length > 0 && !choiceId && !choiceIds) {
     return [await reply(context, event, 'official.workspace-connector.invalidChoice')];
   }
   try {
@@ -347,7 +348,7 @@ async function handleWorkspaceSessionMessageV2(
       eventId: event.message.id,
       idempotencyKey: `whatsapp-session-v2:${event.message.id}:${session.sessionId}`,
       actor: { identityId: currentActor.identityId, ...(currentActor.phoneNumber ? { verifiedWhatsappNumber: currentActor.phoneNumber.startsWith('+') ? currentActor.phoneNumber : `+${currentActor.phoneNumber}` } : {}) },
-      input: choiceId ? { kind: 'choice', choiceId } : { kind: 'text', text: body }
+      input: choiceIds ? { kind: 'choices', choiceIds } : choiceId ? { kind: 'choice', choiceId } : { kind: 'text', text: body }
     });
     return await applyWorkspaceResultV2(context, event, session, result);
   } catch (error) {
@@ -1219,4 +1220,13 @@ function ackV2(
     ...(providerMessageId ? { providerMessageId } : {}),
     ...(safeFailureCode ? { safeFailureCode } : {})
   };
+}
+
+function resolveWorkspaceChoices(choices: ReadonlyArray<{ id: string; label: string }>, answer: string): string[] | undefined {
+  const single = resolveWorkspaceChoice(choices, answer);
+  if (single) return [single];
+  const parts = answer.trim().split(/[,;\s]+/u).filter(Boolean);
+  if (parts.length < 2) return undefined;
+  const ids = parts.map(part => resolveWorkspaceChoice(choices, part));
+  return ids.every((id): id is string => Boolean(id)) ? [...new Set(ids)] : undefined;
 }
