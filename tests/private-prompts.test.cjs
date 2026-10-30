@@ -733,3 +733,17 @@ test('numbered multiple selections also work for sessions delivered without a pr
     message: { id: 'multi-reply', body: '1, 2', hasMedia: false, fromMe: false, context: 'private', chatId: 'person@lid' } });
   assert.deepEqual(requests[0].input, { kind: 'choices', choiceIds: ['person:1', 'person:2'] });
 });
+
+test('an incremental upload receipt preserves collection limits and the open finish prompt', async t => {
+  const f = fixture(t, { capabilityId: 'gallery.media.upload.v1' }); await f.start();
+  const session = { ...await findWorkspaceMediaSession(f.context.dataStore, 'person-1'),
+    acceptedMessageKinds: ['document'], acceptedMimeTypes: ['image/png'], maximumFiles: 100,
+    maximumFileBytes: 1048576, mediaChatId: 'person@lid', choices: [{ id: 'finish', label: 'Done' }] };
+  const updated = await require('../dist/mediaSessions').refreshWorkspaceSessionActionsV2(f.context.dataStore, session,
+    [{ kind: 'reply', route: { kind: 'origin' }, text: 'Uploaded' }],
+    { timer: { timerId: 'next-inactivity', fireAt: '2099-01-01T00:00:00.000Z' } });
+  for (const key of ['acceptedMessageKinds','acceptedMimeTypes','maximumFiles','maximumFileBytes','mediaChatId','choices','privatePromptSubjectId']) {
+    assert.deepEqual(updated[key], session[key], key);
+  }
+  assert.equal(updated.timer.timerId, 'next-inactivity');
+});

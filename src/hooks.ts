@@ -238,6 +238,16 @@ export async function handleWorkspaceSessionMessage(
   installationId: string,
   event: PluginMessageEvent
 ): Promise<PluginAction[] | void> {
+  return withWorkspacePrivateSessionLock(context, event.actorIdentityId,
+    () => handleWorkspaceSessionMessageUnlocked(context, client, installationId, event));
+}
+
+async function handleWorkspaceSessionMessageUnlocked(
+  context: PluginRuntimeContext,
+  client: WorkspaceSessionClient,
+  installationId: string,
+  event: PluginMessageEvent
+): Promise<PluginAction[] | void> {
   if (event.message.fromMe || event.isCommandLike) return;
   const session = await findWorkspaceMediaSession(
     context.dataStore,

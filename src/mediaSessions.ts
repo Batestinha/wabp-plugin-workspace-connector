@@ -301,16 +301,11 @@ export async function refreshWorkspaceSessionActionsV2(
 ): Promise<StoredWorkspaceSessionV2> {
   const choice = actions.find((action) => action.kind === 'choice');
   const request = actions.find((action) => action.kind === 'request_media');
-  const withoutRequest: Record<string, unknown> = { ...session };
-  delete withoutRequest.acceptedMessageKinds;
-  delete withoutRequest.acceptedMimeTypes;
-  delete withoutRequest.maximumFileBytes;
-  delete withoutRequest.maximumFiles;
-  delete withoutRequest.mediaChatId;
-  delete withoutRequest.timer;
+  // Upload receipts contain incremental replies/timers. Absence of a new media
+  // request does not end collection or replace the still-open finish prompt.
   const parsed = storedSessionSchema.parse({
-    ...withoutRequest,
-    choices: choice?.choices ?? [],
+    ...session,
+    choices: choice?.choices ?? session.choices,
     ...(choice ? { selectionRule: choice.selectionRule ?? 'SINGLE' } : {}),
     ...(request ? {
       acceptedMessageKinds: request.acceptedMessageKinds,
