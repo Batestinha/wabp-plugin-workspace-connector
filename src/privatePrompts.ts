@@ -22,12 +22,14 @@ const promptRecordSchema = z.object({
   result: WorkspaceConnectorInvocationResultV2Schema.optional(),
   whatsappLinkReceived: z.boolean().optional(),
   whatsappLinkCannotContinue: z.boolean().optional(),
-  completed: z.boolean().optional()
+  completed: z.boolean().optional(),
+  failureNotified: z.boolean().optional()
 });
 type PromptRecord = z.infer<typeof promptRecordSchema>;
 type PromptContext = Pick<PluginRuntimeContext,
   'flowEngine' | 'dataStore' | 'i18n' | 'sendText' | 'configFor' | 'resolveStableIdentityById'
   | 'currentMemberIdentityIdsForScope' | 'coveredGroupsForScope' | 'enqueuePluginJob'>;
+type PromptDeliveryContext = Pick<PromptContext, 'flowEngine' | 'dataStore' | 'i18n'>;
 const privateSessionOperations = new Map<string, Promise<unknown>>();
 
 /** Serialize this plugin's delivery, reply and cancellation writes within the account runtime. */
@@ -84,7 +86,7 @@ export async function markWorkspacePrivateChoiceCompleted(
 }
 
 export async function deliverWorkspacePrivateChoice(
-  context: PromptContext, session: StoredWorkspaceSessionV2, prompt: string,
+  context: PromptDeliveryContext, session: StoredWorkspaceSessionV2, prompt: string,
   idempotencyKey: string, expiresAt = new Date(session.expiresAt)
 ): Promise<string> {
   const engine = context.flowEngine;
@@ -101,7 +103,7 @@ export async function deliverWorkspacePrivateChoice(
   return persistWorkspacePrivatePromptReceipt(context, record);
 }
 
-async function persistWorkspacePrivatePromptReceipt(context: PromptContext, record: PromptRecord): Promise<string> {
+async function persistWorkspacePrivatePromptReceipt(context: PromptDeliveryContext, record: PromptRecord): Promise<string> {
   const engine = context.flowEngine;
   if (!engine) throw new Error('Workspace private choices require FlowEngine.');
   const { session, question: prompt, idempotencyKey } = record;
@@ -251,7 +253,8 @@ async function continuePrivateChoice(
     if (isWhatsappLink) {
       await acknowledgeWhatsappLinkResponse(context, record, lock.flowPromptId, 'received');
     }
-    record.result = await client.continueSessionV2({
+    try {
+      record.result = await client.continueSessionV2({
       protocolVersion: 2, installationId, catalogRevision: session.catalogRevision,
       catalogDigestSha256: session.catalogDigestSha256, sessionId: session.sessionId, capabilityId, scopeId: session.scopeId,
       origin: session.origin, current: { chatId: session.actorPrivateChatId, surface: 'private' },
@@ -261,7 +264,18 @@ async function continuePrivateChoice(
         verifiedWhatsappNumber: actor.phoneNumber.startsWith('+') ? actor.phoneNumber : `+${actor.phoneNumber}`
       } : {}) }, input: session.choices.length
         ? { kind: 'choice', choiceId: choice.id } : { kind: 'text', text: choice.label }
-    });
+      });
+    } catch (error) {
+      if (capabilityId === 'gallery.media.upload.v1' && !record.failureNotified && context.sendText) {
+        const t = await context.i18n.translatorForIdentity(session.actorIdentityId, session.scopeId);
+        await context.sendText(session.actorPrivateChatId, t('official.workspace-connector.unavailable'), {
+          idempotencyKey: `workspace-choice-v2:${lock.flowPromptId}:unavailable`, waitForServerAck: true
+        });
+        record.failureNotified = true;
+        await context.dataStore.set(lock.subjectId, record);
+      }
+      throw error;
+    }
     // Replayed locks reuse the remote result, including after a local send failure.
     await context.dataStore.set(lock.subjectId, record);
   }

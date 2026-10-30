@@ -612,3 +612,86 @@ test('a private continuation requesting text keeps the next human answer in Flow
   await f.handle(lock);
   assert.deepEqual(f.callbacks[1].input, { kind: 'text', text: 'Actual human answer' });
 });
+
+async function galleryCommand(t, f) {
+  const capabilityId = 'gallery.media.upload.v1';
+  const catalog = { protocolVersion: 2, workspaceId: 'workspace-1', workspaceLabel: 'Workspace', revision: 1,
+    aliases: [{ namespace: 'gallery', capabilityId, contexts: ['private', 'group'],
+      descriptionByLocale: { en: 'Upload originals', 'pt-PT': 'Carregar originais' },
+      usageByLocale: { en: '/gallery', 'pt-PT': '/gallery' } }],
+    capabilities: [{ capabilityId, interfaces: ['interactive', 'media'], maximumPayloadBytes: 65536,
+      mediaMimeTypes: ['image/png'], cancellationSupported: true }], ambientTriggers: [] };
+  catalog.digestSha256 = createHash('sha256').update(workspaceConnectorCatalogDigestPreimage(catalog)).digest('hex');
+  t.mock.method(WorkspaceConnectorClient.prototype, 'catalog', async () => ({ protocolVersion: 1,
+    workspaceId: 'workspace-1', workspaceLabel: 'Workspace', revision: 1, digestSha256: 'a'.repeat(64), aliases: [], capabilities: [] }));
+  t.mock.method(WorkspaceConnectorClient.prototype, 'catalogV2', async () => catalog);
+  t.mock.method(WorkspaceConnectorClient.prototype, 'invokeV2', async input => ({ protocolVersion: 2,
+    invocationId: input.messageId, session: { sessionId: 'gallery-session', expiresAt: '2099-01-01T00:00:00.000Z' },
+    actions: [{ kind: 'choice', route: { kind: 'origin' }, prompt: 'Choose an album', choices: [{ id: 'event-1', label: 'Test Event' }] }] }));
+  let command;
+  f.context.router = { register() {}, replaceNamespaceAliasesAtomically: (_id, aliases) => { command = aliases.find(a => a.namespace === 'gallery').handler; } };
+  f.context.enqueuePluginJob = async () => {};
+  await plugin.registerCommands(f.context);
+  assert.equal(typeof command, 'function');
+  return (messageId = 'gallery-command') => command({ scopeId: 'scope-1', groupWid: 'group@g.us', locale: 'pt-PT',
+    actor: { identityAddress: f.address }, message: { id: messageId, context: 'private', chatId: f.address.deliveryChatId, body: '/gallery' },
+    command: { namespace: 'gallery', args: [] }, t: key => key });
+}
+
+test('/gallery owns its first private menu and consumes the first answer exactly once', async t => {
+  const f = fixture(t, { capabilityId: 'gallery.media.upload.v1', locale: 'pt-PT' });
+  const invoke = await galleryCommand(t, f);
+  const result = await invoke();
+  assert.deepEqual(result.pluginActions, []);
+  assert.equal(f.prompts.length, 1);
+  assert.deepEqual(f.prompts[0].options, [{ id: 'event-1', label: 'Test Event' }]);
+  await f.handle(f.lock('event-1'));
+  assert.equal(f.callbacks.length, 1);
+  assert.deepEqual(f.callbacks[0].input, { kind: 'choice', choiceId: 'event-1' });
+  assert.equal(f.callbacks[0].sessionId, 'gallery-session');
+  await invoke();
+  assert.equal(f.prompts.length, 1, 'command replay must not reopen the consumed prompt');
+  assert.equal(await findWorkspaceMediaSession(f.context.dataStore, f.address.identityId), undefined);
+});
+
+test('a new /gallery invocation retires an older locked menu without submitting its stale answer', async t => {
+  const f = fixture(t, { capabilityId: 'gallery.media.upload.v1' });
+  const invoke = await galleryCommand(t, f);
+  await invoke('command-1');
+  const old = f.lock('event-1');
+  const cancelled = [];
+  f.context.flowEngine.cancelPromptBySubject = async input => { cancelled.push(input); return 1; };
+  await invoke('command-2');
+  assert.equal(f.prompts.length, 2);
+  assert.equal(cancelled[0].subjectId, old.subjectId);
+  assert.equal(cancelled[0].includeLocked, true);
+  await f.handle(old);
+  assert.equal(f.callbacks.length, 0);
+  await f.handle(f.lock('event-1'));
+  assert.equal(f.callbacks.length, 1);
+});
+
+test('Gallery backend failures notify once and recover the exact locked answer', async t => {
+  const f = fixture(t, { capabilityId: 'gallery.media.upload.v1', locale: 'pt-PT' });
+  const invoke = await galleryCommand(t, f);
+  let fail = true;
+  const calls = [];
+  t.mock.method(WorkspaceConnectorClient.prototype, 'continueSessionV2', async input => {
+    calls.push(input);
+    if (fail) throw new Error('temporary backend failure');
+    return { protocolVersion: 2, invocationId: 'retry-complete', actions: [{ kind: 'complete', route: { kind: 'origin' }, text: 'Done' }] };
+  });
+  await invoke();
+  const lock = f.lock('event-1');
+  await assert.rejects(f.handle(lock));
+  await assert.rejects(f.handle(lock));
+  assert.equal(f.sends.length, 1);
+  assert.match(f.sends[0][1], /indisponível/i);
+  assert.equal(f.acknowledgements.length, 0);
+  fail = false;
+  await f.handle(lock);
+  assert.deepEqual(calls[0].input, calls[1].input);
+  assert.equal(calls[0].idempotencyKey, calls[1].idempotencyKey);
+  assert.equal(calls[2].idempotencyKey, calls[0].idempotencyKey);
+  assert.deepEqual(f.acknowledgements, ['prompt-1']);
+});
