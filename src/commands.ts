@@ -604,7 +604,7 @@ function workspaceAliasCommandV2(alias: WorkspaceConnectorCommandAliasV2): Comma
     ...(supportsPrivate ? {
       privateManagedTarget: {
         mode: 'infer_group_or_community' as const,
-        qualifyWithCommunity: true
+        collapseCommunities: true
       }
     } : {}),
     mutation: 'durable',

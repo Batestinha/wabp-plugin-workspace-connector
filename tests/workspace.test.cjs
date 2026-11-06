@@ -110,6 +110,47 @@ test('v2 delivery polling succeeds when the retired v1 delivery endpoint is unav
   }
 });
 
+test('private v2 aliases select a community scope rather than prompting for each subgroup', async (t) => {
+  const v2 = { protocolVersion: 2, workspaceId: 'fixture-workspace', workspaceLabel: 'Fixture workspace', revision: 1,
+    aliases: [{ namespace: 'documents', capabilityId: 'fixture.submit.v1', contexts: ['private', 'group'], descriptionByLocale: { en: 'Submit' }, usageByLocale: { en: '/documents' } }],
+    capabilities: [{ capabilityId: 'fixture.submit.v1', interfaces: ['interactive'], maximumPayloadBytes: 8192, mediaMimeTypes: [], cancellationSupported: false }], ambientTriggers: [], digestSha256: digest };
+  const ctx = context(storeFrom(new Map([['catalog:v1', { ...catalog(), aliases: [] }], ['catalog:v2', v2]])));
+  ctx.config = { WORKSPACE_CONNECTOR_BASE_URL: 'https://workspace.example', WORKSPACE_CONNECTOR_OIDC_ISSUER: 'https://identity.example/realms/fixture', WORKSPACE_CONNECTOR_OIDC_CLIENT_ID: 'fixture', WORKSPACE_CONNECTOR_OIDC_AUDIENCE: 'fixture-api', WORKSPACE_CONNECTOR_INSTALLATION_ID: 'fixture-installation', workspaceConnectorOidcClientSecret: 'fixture-secret-for-tests' };
+  let aliases;
+  ctx.router = { register() {}, listCommands: () => [], replaceNamespaceAliasesAtomically: (_pluginId, value) => { aliases = value; } };
+  t.mock.method(WorkspaceConnectorClient.prototype, 'catalog', async () => { throw Error('Offline'); });
+  let dispose;
+  ctx.registerDisposer = callback => { dispose = callback; };
+  await plugin.registerCommands(ctx);
+  try {
+    const commands = aliases.flatMap(alias => alias.commands ?? []);
+    const metadata = commands[0]?.metadata ?? aliases.find(alias => alias.namespace === 'documents')?.metadata;
+    assert.equal(metadata.privateManagedTarget.collapseCommunities, true);
+    assert.equal(metadata.currentManagedGroupMembershipMode, 'effective_scope');
+  } finally { dispose?.(); }
+});
+
+test('unwrapped media bursts enqueue the same authorized ambient job as an explicit album', async (t) => {
+  const v2 = { protocolVersion: 2, workspaceId: 'fixture-workspace', workspaceLabel: 'Fixture workspace', revision: 1,
+    aliases: [], capabilities: [{ capabilityId: 'fixture.submit.v1', interfaces: ['interactive', 'ambient'], maximumPayloadBytes: 8192, mediaMimeTypes: [], cancellationSupported: false }],
+    ambientTriggers: [{ eventType: 'whatsapp.media-album.v1', triggerId: 'fixture.media-burst', capabilityId: 'fixture.submit.v1', delaySeconds: 5 }], digestSha256: digest };
+  const ctx = context(storeFrom(new Map([['catalog:v2', v2]])));
+  ctx.config = { WORKSPACE_CONNECTOR_BASE_URL: 'https://workspace.example', WORKSPACE_CONNECTOR_OIDC_ISSUER: 'https://identity.example/realms/fixture', WORKSPACE_CONNECTOR_OIDC_CLIENT_ID: 'fixture', WORKSPACE_CONNECTOR_OIDC_AUDIENCE: 'fixture-api', WORKSPACE_CONNECTOR_INSTALLATION_ID: 'fixture-installation', workspaceConnectorOidcClientSecret: 'fixture-secret-for-tests' };
+  ctx.configFor = async () => ({ enabled: true, allowedCapabilities: ['fixture.submit.v1'] });
+  const hooks = createWorkspaceConnectorHooks(ctx);
+  const event = id => ({ scopeId: 'community-scope', actorIdentityId: 'person-1', actor: { identityAddress: { identityId: 'person-1', deliveryChatId: 'person@lid', mentionWid: 'person@lid' } }, message: { id, chatId: 'subgroup@g.us', context: 'group', fromMe: false, type: 'image', hasMedia: true }, isCommandLike: false, receivedAt: new Date('2026-11-06T20:30:00Z') });
+  try {
+    assert.equal(await hooks.onMessage(event('one')), undefined);
+    assert.equal(await hooks.onMessage(event('two')), undefined);
+    const actions = await hooks.onMessage(event('three'));
+    assert.equal(actions[0].type, 'plugin.enqueueJob');
+    assert.equal(actions[0].scopeId, 'community-scope');
+    assert.equal(actions[0].payload.event.payload.messageType, 'album');
+    assert.equal(actions[0].payload.event.origin.chatId, 'subgroup@g.us');
+    assert.equal(await hooks.onMessage(event('four')), undefined);
+  } finally { hooks.onShutdown(); }
+});
+
 test('reads a persisted v1 session after restart and preserves catalog and actor binding through continuation', async () => {
   const previous = storeFrom();
   await rememberWorkspaceSession({ store: previous,

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { MediaAlbumObservations } from './mediaAlbumObservations';
 import { createWriteStream } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -87,6 +88,7 @@ type WorkspaceSessionClient = Pick<
 >>;
 
 export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): PluginRuntimeHooks {
+  const albumObservations = new MediaAlbumObservations();
   const connection = workspaceConnectorConnection(context.config);
   if (!connection) return {};
   const client = new WorkspaceConnectorClient(connection);
@@ -208,7 +210,7 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
         event
       );
       if (sessionActions?.length) return sessionActions;
-      return enqueueWorkspaceAmbientEvent(context, connection.installationId, event);
+      return enqueueWorkspaceAmbientEvent(context, connection.installationId, event, albumObservations);
     },
     async onGroupScopeCovered() {
       await Promise.all([refreshScopeDirectory(), refreshScopeMemberships()]);
@@ -966,17 +968,18 @@ async function transferStagedMedia(
 async function enqueueWorkspaceAmbientEvent(
   context: PluginRuntimeContext,
   installationId: string,
-  event: PluginMessageEvent
+  event: PluginMessageEvent,
+  albumObservations: MediaAlbumObservations
 ): Promise<PluginAction[] | void> {
   if (event.message.fromMe || event.isCommandLike || event.message.context !== 'group') return;
   const catalog = WorkspaceConnectorCatalogV2Schema.safeParse(await context.dataStore.get('catalog:v2'));
   if (!catalog.success) return;
-  const eventType = workspaceAmbientEventType(event.message.type);
-  if (!eventType) return;
+  const eventType = 'whatsapp.media-album.v1';
   const trigger = catalog.data.ambientTriggers.find((candidate) => candidate.eventType === eventType);
   if (!trigger) return;
   const scoped = parseWorkspaceConnectorConfig(await context.configFor(event.scopeId, event.actorIdentityId));
   if (!scoped.enabled || !scoped.allowedCapabilities.includes(trigger.capabilityId)) return;
+  if (!albumObservations.observe({ scopeId: event.scopeId, chatId: event.message.chatId, actorIdentityId: event.actorIdentityId, messageId: event.message.id, messageType: event.message.type ?? '', hasMedia: event.message.hasMedia, receivedAt: event.receivedAt })) return;
   const locale = await context.i18n.resolveIdentityLocale(event.actorIdentityId, event.scopeId);
   const actorAddress = event.actor.identityAddress;
   const jobPayload = ambientJobPayloadSchema.parse({
@@ -1011,7 +1014,8 @@ async function enqueueWorkspaceAmbientEvent(
       observedAt: event.receivedAt.toISOString(),
       payload: {
         messageId: event.message.id,
-        messageType: event.message.type,
+        messageType: 'album',
+        observedMessageType: event.message.type,
         hasMedia: event.message.hasMedia
       }
     },
@@ -1152,12 +1156,6 @@ function workspaceRouteContext(session: StoredWorkspaceSessionV2, currentChatId:
 
 async function workspaceV2IsInstalled(context: PluginRuntimeContext): Promise<boolean> {
   return WorkspaceConnectorCatalogV2Schema.safeParse(await context.dataStore.get('catalog:v2')).success;
-}
-
-function workspaceAmbientEventType(messageType: string | undefined): string | undefined {
-  return (messageType ?? '').trim().toLowerCase() === 'album'
-    ? 'whatsapp.media-album.v1'
-    : undefined;
 }
 
 function workspaceMessageKind(type: string | undefined): 'document' | 'image' | 'video' | 'audio' | undefined {
