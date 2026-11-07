@@ -62,6 +62,7 @@ export const storedSessionV2Schema = z.object({
   scopeEvidence: WorkspaceConnectorScopeEvidenceV2Schema,
   locale: z.string().trim().min(2).max(35),
   choices: z.array(choiceSchema).max(64),
+  selectionRule: z.enum(['SINGLE', 'MULTIPLE']).optional(),
   privatePromptSubjectId: z.string().min(1).max(512).optional(),
   acceptedMessageKinds: z.array(z.enum(['document', 'image', 'video', 'audio'])).min(1).max(4).optional(),
   acceptedMimeTypes: z.array(z.string().min(1).max(160)).min(1).max(64).optional(),
@@ -224,6 +225,7 @@ export async function rememberWorkspaceSessionV2(input: {
     scopeEvidence: input.scopeEvidence,
     locale: input.locale,
     choices: choice?.choices ?? [],
+    ...(choice?.selectionRule ? { selectionRule: choice.selectionRule } : {}),
     ...(request ? {
       acceptedMessageKinds: request.acceptedMessageKinds,
       acceptedMimeTypes: request.acceptedMimeTypes,
@@ -299,16 +301,12 @@ export async function refreshWorkspaceSessionActionsV2(
 ): Promise<StoredWorkspaceSessionV2> {
   const choice = actions.find((action) => action.kind === 'choice');
   const request = actions.find((action) => action.kind === 'request_media');
-  const withoutRequest: Record<string, unknown> = { ...session };
-  delete withoutRequest.acceptedMessageKinds;
-  delete withoutRequest.acceptedMimeTypes;
-  delete withoutRequest.maximumFileBytes;
-  delete withoutRequest.maximumFiles;
-  delete withoutRequest.mediaChatId;
-  delete withoutRequest.timer;
+  // Upload receipts contain incremental replies/timers. Absence of a new media
+  // request does not end collection or replace the still-open finish prompt.
   const parsed = storedSessionSchema.parse({
-    ...withoutRequest,
-    choices: choice?.choices ?? [],
+    ...session,
+    choices: choice?.choices ?? session.choices,
+    ...(choice ? { selectionRule: choice.selectionRule ?? 'SINGLE' } : {}),
     ...(request ? {
       acceptedMessageKinds: request.acceptedMessageKinds,
       acceptedMimeTypes: request.acceptedMimeTypes,

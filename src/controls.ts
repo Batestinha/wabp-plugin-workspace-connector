@@ -41,7 +41,7 @@ export const workspaceConnectorControls: ControlDescriptor[] = [
   defineControl({
     id: `plugin.${WORKSPACE_CONNECTOR_PLUGIN_ID}.allowedCapabilities`,
     label: 'Allowed capabilities',
-    description: 'Exact Workspace capability identifiers this scope may invoke or publish.',
+    description: 'Select the Workspace capabilities this scope may invoke or publish.',
     plane: 'plugin-scope-config',
     domain: 'official-plugin-settings',
     section: 'Workspace connector',
@@ -50,7 +50,8 @@ export const workspaceConnectorControls: ControlDescriptor[] = [
     configurable: true,
     storage: { kind: 'plugin-scope-config', pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID, path: 'allowedCapabilities' },
     schema: { type: 'array', max: 128, items: { type: 'string', min: 1, max: 160 } },
-    ui: { widget: 'tags', helpText: 'Exact Workspace capability identifiers this scope may invoke or publish.' },
+    ui: { widget: 'entity-picker', dynamicOptions: { source: 'workspace-capabilities' },
+      helpText: 'Select permissions from the connected Workspace catalog. Search by description or identifier. Existing selections are preserved if the catalog is unavailable.' },
     restartRequirement: 'NO_RESTART',
     dangerous: false,
     sensitivity: { sensitive: false, redact: 'none' },

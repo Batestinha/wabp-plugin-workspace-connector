@@ -7,6 +7,7 @@ const { workspaceConnectorConnection } = require('../dist/config');
 const { rememberWorkspaceSession, findWorkspaceMediaSession } = require('../dist/mediaSessions');
 const { handleWorkspaceSessionMessage } = require('../dist/hooks');
 const { createWorkspaceConnectorHooks } = require('../dist/hooks');
+const { publishCapabilityOptions } = require('../dist/capabilityOptions');
 const connection = { baseUrl: 'https://workspace.example', oidcIssuer: 'https://identity.example/realms/fixture',
   clientId: 'fixture', clientSecret: 'fixture', audience: 'fixture-api', installationId: 'fixture-installation' };
 const t = (key) => plugin.manifest.defaultMessages[key] ?? key;
@@ -39,6 +40,27 @@ test('preserves scoped settings and rejects an unsafe deployment endpoint', () =
   assert.equal(workspaceConnectorConnection({}), undefined);
   assert.throws(() => workspaceConnectorConnection({ WORKSPACE_CONNECTOR_BASE_URL: 'http://workspace.example' }), /canonical HTTPS/);
   assert.throws(() => workspaceConnectorConnection({ WORKSPACE_CONNECTOR_BASE_URL: 'https://workspace.example/?redirect=elsewhere' }), /canonical HTTPS/);
+});
+
+test('publishes account and installation bound capability selector options', async () => {
+  const dataStore = storeFrom();
+  const ctx = context(dataStore);
+  ctx.config = { WHATSAPP_ACCOUNT_ID: 'account-one' };
+  await publishCapabilityOptions(ctx, connection, catalog(), {
+    protocolVersion: 2, workspaceId: 'fixture-workspace', workspaceLabel: 'Fixture workspace', revision: 8,
+    aliases: [{ namespace: 'register', capabilityId: 'account.registration.v1', contexts: ['private'],
+      descriptionByLocale: { en: 'Register an account', 'pt-PT': 'Registar uma conta' },
+      usageByLocale: { en: '/register', 'pt-PT': '/register' } }],
+    capabilities: [{ capabilityId: 'account.registration.v1', interfaces: ['interactive'], maximumPayloadBytes: 8192,
+      mediaMimeTypes: [], cancellationSupported: false }], ambientTriggers: [], digestSha256: digest
+  });
+  const [[key, snapshot]] = [...dataStore.rows];
+  assert.match(key, /^capability-options:v1:account-one:fixture-installation$/);
+  assert.equal(snapshot.accountId, 'account-one');
+  assert.deepEqual(snapshot.options.find(option => option.value === 'account.registration.v1'), {
+    value: 'account.registration.v1', label: 'Register an account', reference: 'account.registration.v1',
+    searchText: 'account.registration.v1 Register an account Register an account Registar uma conta'
+  });
 });
 
 test('registers commands, cancellations and hooks without deployment credentials or network work', async () => {
@@ -86,6 +108,47 @@ test('v2 delivery polling succeeds when the retired v1 delivery endpoint is unav
   } finally {
     hooks.onShutdown?.();
   }
+});
+
+test('private v2 aliases select a community scope rather than prompting for each subgroup', async (t) => {
+  const v2 = { protocolVersion: 2, workspaceId: 'fixture-workspace', workspaceLabel: 'Fixture workspace', revision: 1,
+    aliases: [{ namespace: 'documents', capabilityId: 'fixture.submit.v1', contexts: ['private', 'group'], descriptionByLocale: { en: 'Submit' }, usageByLocale: { en: '/documents' } }],
+    capabilities: [{ capabilityId: 'fixture.submit.v1', interfaces: ['interactive'], maximumPayloadBytes: 8192, mediaMimeTypes: [], cancellationSupported: false }], ambientTriggers: [], digestSha256: digest };
+  const ctx = context(storeFrom(new Map([['catalog:v1', { ...catalog(), aliases: [] }], ['catalog:v2', v2]])));
+  ctx.config = { WORKSPACE_CONNECTOR_BASE_URL: 'https://workspace.example', WORKSPACE_CONNECTOR_OIDC_ISSUER: 'https://identity.example/realms/fixture', WORKSPACE_CONNECTOR_OIDC_CLIENT_ID: 'fixture', WORKSPACE_CONNECTOR_OIDC_AUDIENCE: 'fixture-api', WORKSPACE_CONNECTOR_INSTALLATION_ID: 'fixture-installation', workspaceConnectorOidcClientSecret: 'fixture-secret-for-tests' };
+  let aliases;
+  ctx.router = { register() {}, listCommands: () => [], replaceNamespaceAliasesAtomically: (_pluginId, value) => { aliases = value; } };
+  t.mock.method(WorkspaceConnectorClient.prototype, 'catalog', async () => { throw Error('Offline'); });
+  let dispose;
+  ctx.registerDisposer = callback => { dispose = callback; };
+  await plugin.registerCommands(ctx);
+  try {
+    const commands = aliases.flatMap(alias => alias.commands ?? []);
+    const metadata = commands[0]?.metadata ?? aliases.find(alias => alias.namespace === 'documents')?.metadata;
+    assert.equal(metadata.privateManagedTarget.collapseCommunities, true);
+    assert.equal(metadata.currentManagedGroupMembershipMode, 'effective_scope');
+  } finally { dispose?.(); }
+});
+
+test('unwrapped media bursts enqueue the same authorized ambient job as an explicit album', async (t) => {
+  const v2 = { protocolVersion: 2, workspaceId: 'fixture-workspace', workspaceLabel: 'Fixture workspace', revision: 1,
+    aliases: [], capabilities: [{ capabilityId: 'fixture.submit.v1', interfaces: ['interactive', 'ambient'], maximumPayloadBytes: 8192, mediaMimeTypes: [], cancellationSupported: false }],
+    ambientTriggers: [{ eventType: 'whatsapp.media-album.v1', triggerId: 'fixture.media-burst', capabilityId: 'fixture.submit.v1', delaySeconds: 5 }], digestSha256: digest };
+  const ctx = context(storeFrom(new Map([['catalog:v2', v2]])));
+  ctx.config = { WORKSPACE_CONNECTOR_BASE_URL: 'https://workspace.example', WORKSPACE_CONNECTOR_OIDC_ISSUER: 'https://identity.example/realms/fixture', WORKSPACE_CONNECTOR_OIDC_CLIENT_ID: 'fixture', WORKSPACE_CONNECTOR_OIDC_AUDIENCE: 'fixture-api', WORKSPACE_CONNECTOR_INSTALLATION_ID: 'fixture-installation', workspaceConnectorOidcClientSecret: 'fixture-secret-for-tests' };
+  ctx.configFor = async () => ({ enabled: true, allowedCapabilities: ['fixture.submit.v1'] });
+  const hooks = createWorkspaceConnectorHooks(ctx);
+  const event = id => ({ scopeId: 'community-scope', actorIdentityId: 'person-1', actor: { identityAddress: { identityId: 'person-1', deliveryChatId: 'person@lid', mentionWid: 'person@lid' } }, message: { id, chatId: 'subgroup@g.us', context: 'group', fromMe: false, type: 'image', hasMedia: true }, isCommandLike: false, receivedAt: new Date('2026-11-06T20:30:00Z') });
+  try {
+    assert.equal(await hooks.onMessage(event('one')), undefined);
+    assert.equal(await hooks.onMessage(event('two')), undefined);
+    const actions = await hooks.onMessage(event('three'));
+    assert.equal(actions[0].type, 'plugin.enqueueJob');
+    assert.equal(actions[0].scopeId, 'community-scope');
+    assert.equal(actions[0].payload.event.payload.messageType, 'album');
+    assert.equal(actions[0].payload.event.origin.chatId, 'subgroup@g.us');
+    assert.equal(await hooks.onMessage(event('four')), undefined);
+  } finally { hooks.onShutdown(); }
 });
 
 test('reads a persisted v1 session after restart and preserves catalog and actor binding through continuation', async () => {

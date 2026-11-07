@@ -14,4 +14,7 @@ for (const key of Object.keys(plugin.manifest.defaultMessages)) assert.ok(pt[key
 for (const file of ['node_modules/@wabs/plugin-sdk/dist/command-plugin.js', 'node_modules/@wabs/plugin-sdk/LICENSE', 'node_modules/zod/LICENSE', 'contracts/provenance.json', 'contracts/LICENSE.workspace-connector']) assert.ok(fs.statSync(path.join(root, file)).isFile());
 assert.equal(fs.existsSync(path.join(root, 'node_modules/geo-tz')), false);
 assert.equal(plugin.manifest.configSchema.parse({ enabled: true, deliveryChatId: 'fixture@g.us', allowedCapabilities: ['fixture.submit.v1'] }).deliveryChatId, 'fixture@g.us');
+const capabilityControl = metadata.operatorConsole.controls.find((control) => control.path === 'allowedCapabilities');
+assert.equal(capabilityControl.ui.widget, 'entity-picker');
+assert.equal(capabilityControl.ui.dynamicOptions.source, 'workspace-capabilities');
 console.log(JSON.stringify({ pluginId: metadata.pluginId, version: metadata.version, standaloneLoad: true, translations: Object.keys(pt).length, controls: metadata.operatorConsole.controls.length }));

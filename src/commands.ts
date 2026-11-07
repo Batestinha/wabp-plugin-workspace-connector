@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { publishCapabilityOptions } from './capabilityOptions';
 import type { CommandMetadata } from '@wabs/plugin-sdk/command-metadata';
 import type { CommandContext } from '@wabs/plugin-sdk/commands';
 import {
@@ -23,7 +24,9 @@ import {
   WORKSPACE_CONNECTOR_PLUGIN_ID,
   WORKSPACE_CONNECTOR_SESSION_TIMER_JOB
 } from './manifest';
-import { rememberWorkspaceSession, rememberWorkspaceSessionV2 } from './mediaSessions';
+import { findWorkspaceMediaSession, rememberWorkspaceSession, rememberWorkspaceSessionV2 } from './mediaSessions';
+import { deliverWorkspacePrivateChoice, markWorkspacePrivateChoiceCompleted,
+  withWorkspacePrivateSessionLock, workspacePrivatePromptReceipt, WORKSPACE_PRIVATE_CHOICE_PURPOSE } from './privatePrompts';
 
 const CATALOG_CACHE_KEY = 'catalog:v1';
 const CATALOG_V2_CACHE_KEY = 'catalog:v2';
@@ -101,16 +104,19 @@ export async function registerWorkspaceConnectorCommands(context: PluginCommandC
       const client = new WorkspaceConnectorClient(connection);
       const v1 = await client.catalog();
       let v2 = installed?.v2;
+      let freshV2: WorkspaceConnectorCatalogV2 | undefined;
       try {
         const candidate = await client.catalogV2();
         assertV2CatalogDigest(candidate);
         v2 = candidate;
+        freshV2 = candidate;
       } catch {
         // v2 is additive. A deployment that has not exposed it yet retains the
         // last validated v2 catalog while calendar v1 continues normally.
       }
       installed = { v1, ...(v2 ? { v2 } : {}) };
       await installCatalogAliases(context, runtime, installed);
+      if (freshV2) await publishCapabilityOptions(context, connection, v1, freshV2);
     } catch {
       // A remote outage retains the last atomically installed catalogs and the
       // /workspace recovery namespace.
@@ -260,6 +266,18 @@ async function invokeWorkspaceAliasV2(
   alias: WorkspaceConnectorCommandAliasV2,
   client: WorkspaceConnectorClient
 ) {
+  return withWorkspacePrivateSessionLock(context, requireActor(ctx).identityId,
+    () => invokeWorkspaceAliasV2Locked(context, runtime, ctx, catalog, alias, client));
+}
+
+async function invokeWorkspaceAliasV2Locked(
+  context: PluginCommandContext,
+  runtime: ReturnType<typeof requireOfficialCommandRuntime>,
+  ctx: CommandContext,
+  catalog: WorkspaceConnectorCatalogV2,
+  alias: WorkspaceConnectorCommandAliasV2,
+  client: WorkspaceConnectorClient
+) {
   const actor = requireActor(ctx);
   const connection = workspaceConnectorConnection(context.config);
   if (!connection) return { handled: true, text: ctx.t('official.workspace-connector.unavailable') };
@@ -312,16 +330,30 @@ async function invokeWorkspaceAliasV2(
     actor: workspaceActor,
     arguments: ctx.remainingArgs ?? ctx.command.args
   }, ctx.signal);
-  const pluginActions = await workspaceActionsToPluginActionsV2(context, result.actions, {
+  const route = {
     originChatId: origin.chatId,
     currentChatId: origin.chatId,
     scopeId,
     actorPrivateChatId: actor.deliveryChatId,
     actorMentionWid: actor.mentionWid,
     quotedMessageId: ctx.message.id
-  });
+  };
+  let promptAction: (typeof result.actions)[number] | undefined;
   if (result.session && context.dataStore) {
     const request = result.actions.find((action) => action.kind === 'request_media');
+    const promptKey = `workspace-command-v2:${ctx.message.id}:${result.session.sessionId}`;
+    if (privateInvocation && context.flowEngine && await workspacePrivatePromptReceipt(
+      { dataStore: context.dataStore }, promptKey, actor.identityId, result.session.sessionId)) {
+      // Re-delivery of the command must not replace a later prompt or reopen a completed one.
+      return { handled: true, response: { kind: 'none' as const }, pluginActions: [] };
+    }
+    const previous = await findWorkspaceMediaSession(context.dataStore, actor.identityId);
+    // A new command must not leave an old locked prompt consuming its replies.
+    if (privateInvocation && previous?.schemaVersion === 2 && previous.privatePromptSubjectId && context.flowEngine) {
+      await markWorkspacePrivateChoiceCompleted({ dataStore: context.dataStore }, previous);
+      await context.flowEngine.cancelPromptBySubject({ purpose: WORKSPACE_PRIVATE_CHOICE_PURPOSE,
+        subjectId: previous.privatePromptSubjectId, includeLocked: true });
+    }
     const mediaChatId = request
       ? await resolveWorkspaceActionRouteV2(context, request.route, {
           originChatId: origin.chatId,
@@ -351,10 +383,23 @@ async function invokeWorkspaceAliasV2(
       locale: ctx.locale,
       ...(mediaChatId ? { mediaChatId } : {})
     });
+    if (privateInvocation && session && !request && context.flowEngine) {
+      promptAction = result.actions.find(action => action.kind === 'choice')
+        ?? (!session.timer ? result.actions.find(action => action.kind === 'reply') : undefined);
+      if (promptAction?.kind === 'choice' || promptAction?.kind === 'reply') {
+        const promptChatId = await resolveWorkspaceActionRouteV2(context, promptAction.route, route);
+        if (promptChatId !== actor.deliveryChatId) throw new Error('Workspace private prompt left its bound conversation.');
+        await deliverWorkspacePrivateChoice({ ...context, dataStore: context.dataStore }, session,
+          promptAction.kind === 'choice' ? promptAction.prompt : promptAction.text,
+          promptKey);
+      }
+    }
     if (session?.timer) {
       await scheduleWorkspaceSessionTimer(runtime, { ...session, timer: session.timer });
     }
   }
+  const pluginActions = await workspaceActionsToPluginActionsV2(context,
+    result.actions.filter(action => action !== promptAction), route);
   return {
     handled: true,
     response: { kind: 'none' as const },
@@ -559,7 +604,7 @@ function workspaceAliasCommandV2(alias: WorkspaceConnectorCommandAliasV2): Comma
     ...(supportsPrivate ? {
       privateManagedTarget: {
         mode: 'infer_group_or_community' as const,
-        qualifyWithCommunity: true
+        collapseCommunities: true
       }
     } : {}),
     mutation: 'durable',

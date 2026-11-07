@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
+import { MediaAlbumObservations } from './mediaAlbumObservations';
+import { createWriteStream } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -21,6 +22,7 @@ import type { PluginRuntimeContext } from './runtime';
 import { enqueuePluginJob } from '@wabs/plugin-sdk/jobs';
 import type { PluginJobEvent, PluginMessageEvent, PluginRuntimeHooks } from '@wabs/plugin-sdk/hooks';
 import { WorkspaceConnectorClient } from './client';
+import { openFileUpload } from './fileUpload';
 import {
   renderWorkspaceActions,
   assertV2CatalogDigest,
@@ -86,6 +88,7 @@ type WorkspaceSessionClient = Pick<
 >>;
 
 export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): PluginRuntimeHooks {
+  const albumObservations = new MediaAlbumObservations();
   const connection = workspaceConnectorConnection(context.config);
   if (!connection) return {};
   const client = new WorkspaceConnectorClient(connection);
@@ -207,7 +210,7 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
         event
       );
       if (sessionActions?.length) return sessionActions;
-      return enqueueWorkspaceAmbientEvent(context, connection.installationId, event);
+      return enqueueWorkspaceAmbientEvent(context, connection.installationId, event, albumObservations);
     },
     async onGroupScopeCovered() {
       await Promise.all([refreshScopeDirectory(), refreshScopeMemberships()]);
@@ -233,6 +236,16 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
 }
 
 export async function handleWorkspaceSessionMessage(
+  context: PluginRuntimeContext,
+  client: WorkspaceSessionClient,
+  installationId: string,
+  event: PluginMessageEvent
+): Promise<PluginAction[] | void> {
+  return withWorkspacePrivateSessionLock(context, event.actorIdentityId,
+    () => handleWorkspaceSessionMessageUnlocked(context, client, installationId, event));
+}
+
+async function handleWorkspaceSessionMessageUnlocked(
   context: PluginRuntimeContext,
   client: WorkspaceSessionClient,
   installationId: string,
@@ -325,7 +338,8 @@ async function handleWorkspaceSessionMessageV2(
   const choiceId = session.choices.length > 0
     ? resolveWorkspaceChoice(session.choices, body)
     : undefined;
-  if (session.choices.length > 0 && !choiceId) {
+  const choiceIds = session.selectionRule === 'MULTIPLE' ? resolveWorkspaceChoices(session.choices, body) : undefined;
+  if (session.choices.length > 0 && !choiceId && !choiceIds) {
     return [await reply(context, event, 'official.workspace-connector.invalidChoice')];
   }
   try {
@@ -347,7 +361,7 @@ async function handleWorkspaceSessionMessageV2(
       eventId: event.message.id,
       idempotencyKey: `whatsapp-session-v2:${event.message.id}:${session.sessionId}`,
       actor: { identityId: currentActor.identityId, ...(currentActor.phoneNumber ? { verifiedWhatsappNumber: currentActor.phoneNumber.startsWith('+') ? currentActor.phoneNumber : `+${currentActor.phoneNumber}` } : {}) },
-      input: choiceId ? { kind: 'choice', choiceId } : { kind: 'text', text: body }
+      input: choiceIds ? { kind: 'choices', choiceIds } : choiceId ? { kind: 'choice', choiceId } : { kind: 'text', text: body }
     });
     return await applyWorkspaceResultV2(context, event, session, result);
   } catch (error) {
@@ -698,7 +712,7 @@ async function handleMediaMessageV1(
   } catch (error) {
     retry = rescheduleWorkspaceMediaRetry(retry);
     await storeWorkspaceMediaRetry(context.dataStore, retry);
-    context.logger.warn({ error, sessionId: activeSession.sessionId }, 'Workspace media upload failed');
+    context.logger.warn({ err: error, sessionId: activeSession.sessionId }, 'Workspace media upload failed');
     return [await reply(context, event, 'official.workspace-connector.mediaUnavailable')];
   }
 }
@@ -803,7 +817,7 @@ async function handleMediaMessageV2(
   } catch (error) {
     retry = rescheduleWorkspaceMediaRetry(retry);
     await storeWorkspaceMediaRetry(context.dataStore, retry);
-    context.logger.warn({ error, sessionId: activeSession.sessionId }, 'Workspace v2 media upload failed');
+    context.logger.warn({ err: error, sessionId: activeSession.sessionId }, 'Workspace v2 media upload failed');
     return [await reply(context, event, 'official.workspace-connector.mediaUnavailable')];
   }
 }
@@ -886,7 +900,7 @@ async function retryStagedMedia(
       }
     } catch (error) {
       await storeWorkspaceMediaRetry(context.dataStore, rescheduleWorkspaceMediaRetry(retry));
-      context.logger.warn({ error, sessionId: retry.sessionId }, 'Workspace staged-media retry failed');
+      context.logger.warn({ err: error, sessionId: retry.sessionId }, 'Workspace staged-media retry failed');
     }
   }
 }
@@ -915,11 +929,17 @@ async function transferStagedMedia(
   retry: WorkspaceMediaRetry
 ) {
   if (!context.mediaStore) throw new Error('Workspace media store is unavailable.');
-  const storedFile = context.mediaStore.openFile ? await context.mediaStore.openFile(retry.mediaId) : undefined;
-  const body = storedFile
-    ? Readable.toWeb(createReadStream(storedFile.path)) as ReadableStream<Uint8Array>
-    : (await context.mediaStore.read(retry.mediaId))?.buffer;
-  if (!body) throw new Error('Workspace staged media is unavailable.');
+  const upload = async <T>(send: (body: Buffer | ReadableStream<Uint8Array>) => Promise<T>) => {
+    const storedFile = context.mediaStore!.openFile ? await context.mediaStore!.openFile(retry.mediaId) : undefined;
+    const file = storedFile ? await openFileUpload(storedFile.path) : undefined;
+    try {
+      const body = file?.body ?? (await context.mediaStore!.read(retry.mediaId))?.buffer;
+      if (!body) throw new Error('Workspace staged media is unavailable.');
+      return await send(body);
+    } finally {
+      await file?.close();
+    }
+  };
   if (retry.schemaVersion === 1) {
     const grant = await client.requestMediaGrant({
       protocolVersion: 1,
@@ -929,7 +949,7 @@ async function transferStagedMedia(
       fileId: retry.fileId,
       metadata: retry.metadata
     });
-    return client.uploadGrantedMedia(grant, body);
+    return upload(body => client.uploadGrantedMedia(grant, body));
   }
   if (!client.requestMediaGrantV2 || !client.uploadGrantedMediaV2) {
     throw new Error('Workspace connector v2 media client is unavailable.');
@@ -942,23 +962,24 @@ async function transferStagedMedia(
     fileId: retry.fileId,
     metadata: retry.metadata
   });
-  return client.uploadGrantedMediaV2(grant, body);
+  return upload(body => client.uploadGrantedMediaV2!(grant, body));
 }
 
 async function enqueueWorkspaceAmbientEvent(
   context: PluginRuntimeContext,
   installationId: string,
-  event: PluginMessageEvent
+  event: PluginMessageEvent,
+  albumObservations: MediaAlbumObservations
 ): Promise<PluginAction[] | void> {
   if (event.message.fromMe || event.isCommandLike || event.message.context !== 'group') return;
   const catalog = WorkspaceConnectorCatalogV2Schema.safeParse(await context.dataStore.get('catalog:v2'));
   if (!catalog.success) return;
-  const eventType = workspaceAmbientEventType(event.message.type);
-  if (!eventType) return;
+  const eventType = 'whatsapp.media-album.v1';
   const trigger = catalog.data.ambientTriggers.find((candidate) => candidate.eventType === eventType);
   if (!trigger) return;
   const scoped = parseWorkspaceConnectorConfig(await context.configFor(event.scopeId, event.actorIdentityId));
   if (!scoped.enabled || !scoped.allowedCapabilities.includes(trigger.capabilityId)) return;
+  if (!albumObservations.observe({ scopeId: event.scopeId, chatId: event.message.chatId, actorIdentityId: event.actorIdentityId, messageId: event.message.id, messageType: event.message.type ?? '', hasMedia: event.message.hasMedia, receivedAt: event.receivedAt })) return;
   const locale = await context.i18n.resolveIdentityLocale(event.actorIdentityId, event.scopeId);
   const actorAddress = event.actor.identityAddress;
   const jobPayload = ambientJobPayloadSchema.parse({
@@ -993,7 +1014,8 @@ async function enqueueWorkspaceAmbientEvent(
       observedAt: event.receivedAt.toISOString(),
       payload: {
         messageId: event.message.id,
-        messageType: event.message.type,
+        messageType: 'album',
+        observedMessageType: event.message.type,
         hasMedia: event.message.hasMedia
       }
     },
@@ -1136,12 +1158,6 @@ async function workspaceV2IsInstalled(context: PluginRuntimeContext): Promise<bo
   return WorkspaceConnectorCatalogV2Schema.safeParse(await context.dataStore.get('catalog:v2')).success;
 }
 
-function workspaceAmbientEventType(messageType: string | undefined): string | undefined {
-  return (messageType ?? '').trim().toLowerCase() === 'album'
-    ? 'whatsapp.media-album.v1'
-    : undefined;
-}
-
 function workspaceMessageKind(type: string | undefined): 'document' | 'image' | 'video' | 'audio' | undefined {
   const normalized = (type ?? '').trim().toLowerCase();
   return ['document', 'image', 'video', 'audio'].includes(normalized)
@@ -1219,4 +1235,13 @@ function ackV2(
     ...(providerMessageId ? { providerMessageId } : {}),
     ...(safeFailureCode ? { safeFailureCode } : {})
   };
+}
+
+function resolveWorkspaceChoices(choices: ReadonlyArray<{ id: string; label: string }>, answer: string): string[] | undefined {
+  const single = resolveWorkspaceChoice(choices, answer);
+  if (single) return [single];
+  const parts = answer.trim().split(/[,;\s]+/u).filter(Boolean);
+  if (parts.length < 2) return undefined;
+  const ids = parts.map(part => resolveWorkspaceChoice(choices, part));
+  return ids.every((id): id is string => Boolean(id)) ? [...new Set(ids)] : undefined;
 }

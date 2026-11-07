@@ -268,15 +268,7 @@ export class WorkspaceConnectorClient {
     signal?: AbortSignal
   ): Promise<WorkspaceConnectorMediaUploadReceipt> {
     const grant = WorkspaceConnectorMediaGrantSchema.parse(grantInput);
-    const upload = new URL(grant.uploadUrl);
-    const base = new URL(this.#connection.baseUrl);
-    if (
-      upload.origin !== base.origin || upload.username || upload.password ||
-      upload.search || upload.hash ||
-      upload.pathname !== `/v1/workspace-connector/v1/media-grants/${encodeURIComponent(grant.grantId)}`
-    ) {
-      throw new Error('Workspace media grant returned an untrusted upload URL.');
-    }
+    this.#assertTrustedMediaGrantUrl(grant.uploadUrl, grant.grantId, 1);
     if (Buffer.isBuffer(body) && body.byteLength !== grant.sizeBytes) {
       throw new Error('Workspace media bytes did not match their exact grant.');
     }
@@ -351,7 +343,7 @@ export class WorkspaceConnectorClient {
     if (
       grantUrl.origin !== base.origin || grantUrl.username || grantUrl.password
       || grantUrl.search || grantUrl.hash
-      || grantUrl.pathname !== `/v1/workspace-connector/v${protocolVersion}/media-grants/${encodeURIComponent(grantId)}`
+      || grantUrl.pathname !== `${base.pathname.replace(/\/$/u, '')}/v1/workspace-connector/v${protocolVersion}/media-grants/${encodeURIComponent(grantId)}`
     ) {
       throw new Error('Workspace media grant returned an untrusted URL.');
     }
@@ -500,6 +492,8 @@ function requestCancellation(parent: AbortSignal | undefined, timeoutMs: number)
     dispose() {
       clearTimeout(timeout);
       parent?.removeEventListener('abort', abortFromParent);
+      // An early HTTP rejection can arrive while a streamed request is still being read.
+      controller.abort();
     }
   };
 }

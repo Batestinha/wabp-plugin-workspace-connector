@@ -2,7 +2,7 @@
 
 Connect WABP scopes to a compatible workspace using the versioned workspace protocol, command aliases, durable sessions, staged media and delivery receipts.
 
-Standalone WABS package `official.workspace-connector` version `0.8.4`, requiring WABP core API `^0.3.9`. Existing plugin IDs, scoped settings, allowed capabilities, session keys, actor bindings, media references and receipt formats remain unchanged. Deployment connection settings are supplied by the host. This repository contains no deployment credentials.
+Standalone WABS package `official.workspace-connector` version `0.8.9`, requiring WABP core API `^0.3.9`. Existing plugin IDs, scoped settings, allowed capabilities, session keys, actor bindings, media references and receipt formats remain unchanged. Deployment connection settings are supplied by the host. This repository contains no deployment credentials.
 
 The package includes the SDK, Zod, Portuguese translations and the unmodified v1/v2 workspace protocol contract. Its upstream commit, checksum and license are recorded in `contracts/provenance.json`; packaging rejects contract drift. WABP owns scoped storage, media staging, authentication configuration, transport authorization and job persistence.
 
@@ -49,3 +49,7 @@ blank for the Portuguese or English default. Configure the account's Global
 scope when present; otherwise every enabled Connector scope must agree on these
 private-message settings. Code and explanation use WABP's sensitive delivery
 service and are excluded from captured history, echoes, replay, and quotations.
+
+Version 0.8.8 carries protocol 0.5 multiple-choice menus through durable private prompts. Multiple participant numbers produce one atomic continuation; existing single-choice sessions remain compatible.
+
+Version 0.8.9 validates media grant URLs against the configured API prefix and streams retained originals with cancellation-safe file reads. Failed uploads close their file handles and remain available for retry.
