@@ -64,7 +64,11 @@ jobs:
         shell: bash
         env:
           REF: ${{ inputs.ref }}
-        run: git merge-base --is-ancestor "$REF" origin/main || { echo "::error::$REF is not on main"; exit 1; }
+        # actions/checkout drops its safe.directory exception after cloning; the container runs as root.
+        run: |
+          set -Eeuo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git merge-base --is-ancestor "$REF" origin/main || { echo "::error::$REF is not on main"; exit 1; }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.23.2'
