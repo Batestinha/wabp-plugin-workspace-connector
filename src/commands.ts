@@ -588,6 +588,7 @@ function workspaceCommand(mutation: CommandMetadata['mutation']): PluginCommandM
 function workspaceAliasCommandV1(alias: WorkspaceConnectorCommandAlias): PluginCommandMetadata {
   return {
     ...workspaceCommand('durable'),
+    ...workspaceAliasInvocation(alias.contexts),
     help: {
       familyKey: 'official.workspace-connector.help.family',
       featureId: 'workspace-connector',
@@ -601,8 +602,7 @@ function workspaceAliasCommandV2(alias: WorkspaceConnectorCommandAliasV2): Plugi
   const supportsPrivate = alias.contexts.includes('private');
   return {
     plane: 'group_operation',
-    interaction: supportsPrivate ? 'either_same_chat' : 'group_same_chat',
-    invocation: supportsPrivate ? 'either' : 'group_only',
+    ...workspaceAliasInvocation(alias.contexts),
     interactionPolicy: { kind: 'guided', conversationAudience: 'requester', resultAudience: 'requester' },
     pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID,
     requiresManagedGroup: true,
@@ -629,6 +629,14 @@ function workspaceAliasCommandV2(alias: WorkspaceConnectorCommandAliasV2): Plugi
       intentTags: [alias.namespace]
     }
   };
+}
+
+function workspaceAliasInvocation(contexts: readonly string[]): Pick<PluginCommandMetadata, 'invocation' | 'interaction'> {
+  const privateAllowed = contexts.includes('private');
+  const groupAllowed = contexts.includes('group');
+  if (privateAllowed && groupAllowed) return { invocation: 'either', interaction: 'either_same_chat' };
+  return privateAllowed ? { invocation: 'private_only', interaction: 'private_same_chat' }
+    : { invocation: 'group_only', interaction: 'group_same_chat' };
 }
 
 function localizedCatalogValue(values: Record<string, string>): string {

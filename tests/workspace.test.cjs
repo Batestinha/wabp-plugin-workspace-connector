@@ -110,9 +110,9 @@ test('v2 delivery polling succeeds when the retired v1 delivery endpoint is unav
   }
 });
 
-test('private v2 aliases select a community scope rather than prompting for each subgroup', async (t) => {
+test('private-only v2 aliases declare their invocation boundary and select a community scope', async (t) => {
   const v2 = { protocolVersion: 2, workspaceId: 'fixture-workspace', workspaceLabel: 'Fixture workspace', revision: 1,
-    aliases: [{ namespace: 'documents', capabilityId: 'fixture.submit.v1', contexts: ['private', 'group'], descriptionByLocale: { en: 'Submit' }, usageByLocale: { en: '/documents' } }],
+    aliases: [{ namespace: 'documents', capabilityId: 'fixture.submit.v1', contexts: ['private'], descriptionByLocale: { en: 'Submit' }, usageByLocale: { en: '/documents' } }],
     capabilities: [{ capabilityId: 'fixture.submit.v1', interfaces: ['interactive'], maximumPayloadBytes: 8192, mediaMimeTypes: [], cancellationSupported: false }], ambientTriggers: [], digestSha256: digest };
   const ctx = context(storeFrom(new Map([['catalog:v1', { ...catalog(), aliases: [] }], ['catalog:v2', v2]])));
   ctx.config = { WORKSPACE_CONNECTOR_BASE_URL: 'https://workspace.example', WORKSPACE_CONNECTOR_OIDC_ISSUER: 'https://identity.example/realms/fixture', WORKSPACE_CONNECTOR_OIDC_CLIENT_ID: 'fixture', WORKSPACE_CONNECTOR_OIDC_AUDIENCE: 'fixture-api', WORKSPACE_CONNECTOR_INSTALLATION_ID: 'fixture-installation', workspaceConnectorOidcClientSecret: 'fixture-secret-for-tests' };
@@ -126,6 +126,7 @@ test('private v2 aliases select a community scope rather than prompting for each
     const commands = aliases.flatMap(alias => alias.commands ?? []);
     const metadata = commands[0]?.metadata ?? aliases.find(alias => alias.namespace === 'documents')?.metadata;
     assert.equal(metadata.privateManagedTarget.collapseCommunities, true);
+    assert.equal(metadata.invocation, 'private_only');
     assert.equal(metadata.currentManagedGroupMembershipMode, 'effective_scope');
   } finally { dispose?.(); }
 });
@@ -224,8 +225,9 @@ test('a v1 group invocation continues privately without changing its original sc
   ctx.configFor = async () => ({ enabled: true, allowedCapabilities: ['fixture.submit.v1'] });
   ctx.currentMemberIdentityIdsForScope = async () => [actor.identityId];
   const commands = new Map();
+  let aliases;
   ctx.router = { register: (namespace, name, metadata, handler) => commands.set(`${namespace}.${name}`, { metadata, handler }),
-    listCommands: () => [], replaceNamespaceAliasesAtomically() {} };
+    listCommands: () => [], replaceNamespaceAliasesAtomically: (_owner, value) => { aliases = value; } };
   testContext.mock.method(global, 'setInterval', () => ({ unref() {} }));
   testContext.mock.method(WorkspaceConnectorClient.prototype, 'catalog', async () => catalog());
   testContext.mock.method(WorkspaceConnectorClient.prototype, 'catalogV2', async () => { throw new Error('v1 authority'); });
@@ -233,6 +235,7 @@ test('a v1 group invocation continues privately without changing its original sc
     sessionExpiresAt: '2099-01-01T00:00:00.000Z', actions: [{ kind: 'reply', text: 'Next detail?' }] };
   testContext.mock.method(WorkspaceConnectorClient.prototype, 'invoke', async () => result);
   await plugin.registerCommands(ctx);
+  assert.equal(aliases.find(alias => alias.namespace === 'documents').metadata.invocation, 'group_only');
   const address = { ...actor, canonicalWid: 'fixture@c.us', deliveryChatId: 'fixture@c.us', aliases: ['fixture@c.us'] };
   const messageActor = { wid: 'fixture@c.us', fromMe: false, identityAddress: address };
   const command = commands.get('workspace.*');
