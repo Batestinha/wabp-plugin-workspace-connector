@@ -221,7 +221,7 @@ test('a v1 group invocation continues privately without changing its original sc
   const ctx = context(rows);
   ctx.config = { WORKSPACE_CONNECTOR_BASE_URL: connection.baseUrl, WORKSPACE_CONNECTOR_OIDC_ISSUER: connection.oidcIssuer,
     WORKSPACE_CONNECTOR_OIDC_CLIENT_ID: connection.clientId, WORKSPACE_CONNECTOR_OIDC_AUDIENCE: connection.audience,
-    WORKSPACE_CONNECTOR_INSTALLATION_ID: connection.installationId, workspaceConnectorOidcClientSecret: connection.clientSecret };
+    WORKSPACE_CONNECTOR_INSTALLATION_ID: connection.installationId, workspaceConnectorOidcClientSecret: 'fixture-secret-for-tests' };
   ctx.configFor = async () => ({ enabled: true, allowedCapabilities: ['fixture.submit.v1'] });
   ctx.currentMemberIdentityIdsForScope = async () => [actor.identityId];
   const commands = new Map();
