@@ -364,6 +364,7 @@ async function invokeWorkspaceAliasV2Locked(
         })
       : undefined;
     const session = await rememberWorkspaceSessionV2({
+      commandConversationId: ctx.commandConversation?.id,
       store: context.dataStore,
       result,
       actorIdentityId: actor.identityId,

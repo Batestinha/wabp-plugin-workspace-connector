@@ -110,6 +110,7 @@ async function persistWorkspacePrivatePromptReceipt(context: PromptDeliveryConte
   const { session, question: prompt, idempotencyKey } = record;
   const subjectId = promptSubjectId(idempotencyKey), expiresAt = new Date(record.expiresAt);
   const delivered = await engine.promptChoice({
+    ...(session.commandConversationId ? { commandConversationId: session.commandConversationId } : {}),
     purpose: WORKSPACE_PRIVATE_CHOICE_PURPOSE, subjectType: promptSubjectType(engine), subjectId,
     question: prompt, options: session.choices,
     ...(session.choices.length ? {} : { freeTextOption: { id: 'workspace-text' } }),
@@ -172,7 +173,7 @@ async function adoptWorkspacePrivateChoiceUnlocked(
   const engine = context.flowEngine;
   if (!engine) return false;
   const session = await findWorkspaceMediaSession(context.dataStore, actorIdentityId);
-  if (!session || session.schemaVersion !== 2 || session.origin.surface !== 'private'
+  if (!session || session.schemaVersion !== 2 || (session.origin.surface !== 'private' && !session.commandConversationId)
     || (!session.choices.length && session.timer) || session.acceptedMessageKinds) return false;
   const pending = session.privatePromptSubjectId
     ? promptRecordSchema.safeParse(await context.dataStore.get(session.privatePromptSubjectId)) : undefined;

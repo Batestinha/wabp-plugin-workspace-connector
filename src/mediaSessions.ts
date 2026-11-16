@@ -40,6 +40,7 @@ const storedSessionV1Schema = z.object({
 
 export const storedSessionV2Schema = z.object({
   schemaVersion: z.literal(2),
+  commandConversationId: z.string().min(1).max(512).optional(),
   sessionId: z.string().min(1).max(512),
   capabilityId: z.string().min(1).max(160),
   continuationCapabilityId: z.string().min(1).max(160).optional(),
@@ -164,6 +165,7 @@ export async function rememberWorkspaceSession(input: {
 }
 
 export async function rememberWorkspaceSessionV2(input: {
+  commandConversationId?: string | undefined;
   store: PluginDataStore;
   result: WorkspaceConnectorInvocationResultV2;
   actorIdentityId: string;
@@ -207,6 +209,7 @@ export async function rememberWorkspaceSessionV2(input: {
   });
   const parsed = storedSessionSchema.parse({
     schemaVersion: 2,
+    commandConversationId: input.commandConversationId ?? previousV2?.commandConversationId,
     sessionId: input.result.session.sessionId,
     capabilityId: input.capabilityId,
     ...(continuationCapabilityId ? { continuationCapabilityId } : {}),
