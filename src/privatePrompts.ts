@@ -1,3 +1,4 @@
+import { privateWorkspaceConversation } from './conversation';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { FlowPromptLock } from '@wabs/plugin-sdk/flow-prompts';
@@ -286,7 +287,7 @@ async function continuePrivateChoice(
     // Replayed locks reuse the remote result, including after a local send failure.
     await context.dataStore.set(lock.subjectId, record);
   }
-  const result = record.result;
+  const result = privateWorkspaceConversation(record.result);
   const route = { originChatId: session.origin.chatId, currentChatId: session.actorPrivateChatId,
     scopeId: session.scopeId, actorPrivateChatId: session.actorPrivateChatId, actorMentionWid: session.actorMentionWid };
   const nextChoice = result.actions.find(action => action.kind === 'choice');

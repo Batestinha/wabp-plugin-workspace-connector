@@ -1,6 +1,7 @@
+import { privateWorkspaceConversation } from './conversation';
 import { createHash } from 'node:crypto';
 import { publishCapabilityOptions } from './capabilityOptions';
-import type { CommandMetadata } from '@wabs/plugin-sdk/command-metadata';
+import type { PluginCommandMetadata, CommandMetadata } from '@wabs/plugin-sdk/command-metadata';
 import type { CommandContext } from '@wabs/plugin-sdk/commands';
 import {
   WorkspaceConnectorCatalogSchema,
@@ -246,12 +247,12 @@ async function invokeWorkspaceAliasV1(
       actorIdentityId: actor.identityId,
       actor: workspaceActor,
       scopeId,
-      chatId: ctx.message.chatId,
+      chatId: actor.deliveryChatId,
       groupWid: ctx.message.chatId,
       capabilityId: alias.capabilityId,
       catalogRevision: catalog.revision,
       catalogDigestSha256: catalog.digestSha256,
-      surface,
+      surface: 'private',
       locale: ctx.locale
     });
   }
@@ -313,7 +314,7 @@ async function invokeWorkspaceAliasV2Locked(
         checkedAt: new Date().toISOString()
       };
   const workspaceActor = connectorActor(ctx);
-  const result = await client.invokeV2({
+  const result = privateWorkspaceConversation(await client.invokeV2({
     protocolVersion: 2,
     installationId: connection.installationId,
     catalogRevision: catalog.revision,
@@ -321,7 +322,7 @@ async function invokeWorkspaceAliasV2Locked(
     capabilityId: alias.capabilityId,
     scopeId,
     origin,
-    current: origin,
+    current: { chatId: actor.deliveryChatId, surface: 'private' },
     scopeEvidence,
     locale: ctx.locale,
     eventId: ctx.message.id,
@@ -329,10 +330,10 @@ async function invokeWorkspaceAliasV2Locked(
     idempotencyKey: `whatsapp-v2:${ctx.message.id}:${alias.capabilityId}`,
     actor: workspaceActor,
     arguments: ctx.remainingArgs ?? ctx.command.args
-  }, ctx.signal);
+  }, ctx.signal));
   const route = {
     originChatId: origin.chatId,
-    currentChatId: origin.chatId,
+    currentChatId: actor.deliveryChatId,
     scopeId,
     actorPrivateChatId: actor.deliveryChatId,
     actorMentionWid: actor.mentionWid,
@@ -342,14 +343,14 @@ async function invokeWorkspaceAliasV2Locked(
   if (result.session && context.dataStore) {
     const request = result.actions.find((action) => action.kind === 'request_media');
     const promptKey = `workspace-command-v2:${ctx.message.id}:${result.session.sessionId}`;
-    if (privateInvocation && context.flowEngine && await workspacePrivatePromptReceipt(
+    if (context.flowEngine && await workspacePrivatePromptReceipt(
       { dataStore: context.dataStore }, promptKey, actor.identityId, result.session.sessionId)) {
       // Re-delivery of the command must not replace a later prompt or reopen a completed one.
       return { handled: true, response: { kind: 'none' as const }, pluginActions: [] };
     }
     const previous = await findWorkspaceMediaSession(context.dataStore, actor.identityId);
     // A new command must not leave an old locked prompt consuming its replies.
-    if (privateInvocation && previous?.schemaVersion === 2 && previous.privatePromptSubjectId && context.flowEngine) {
+    if (previous?.schemaVersion === 2 && previous.privatePromptSubjectId && context.flowEngine) {
       await markWorkspacePrivateChoiceCompleted({ dataStore: context.dataStore }, previous);
       await context.flowEngine.cancelPromptBySubject({ purpose: WORKSPACE_PRIVATE_CHOICE_PURPOSE,
         subjectId: previous.privatePromptSubjectId, includeLocked: true });
@@ -357,7 +358,7 @@ async function invokeWorkspaceAliasV2Locked(
     const mediaChatId = request
       ? await resolveWorkspaceActionRouteV2(context, request.route, {
           originChatId: origin.chatId,
-          currentChatId: origin.chatId,
+          currentChatId: actor.deliveryChatId,
           scopeId,
           actorPrivateChatId: actor.deliveryChatId
         })
@@ -383,7 +384,7 @@ async function invokeWorkspaceAliasV2Locked(
       locale: ctx.locale,
       ...(mediaChatId ? { mediaChatId } : {})
     });
-    if (privateInvocation && session && !request && context.flowEngine) {
+    if (session && !request && context.flowEngine) {
       promptAction = result.actions.find(action => action.kind === 'choice')
         ?? (!session.timer ? result.actions.find(action => action.kind === 'reply') : undefined);
       if (promptAction?.kind === 'choice' || promptAction?.kind === 'reply') {
@@ -549,10 +550,12 @@ export function assertV2CatalogDigest(catalog: WorkspaceConnectorCatalogV2): voi
   }
 }
 
-function workspaceCommand(mutation: CommandMetadata['mutation']): CommandMetadata {
+function workspaceCommand(mutation: CommandMetadata['mutation']): PluginCommandMetadata {
   return {
     plane: 'group_operation',
     interaction: mutation === 'none' ? 'group_same_chat' : 'either_same_chat',
+    invocation: mutation === 'none' ? 'group_only' : 'either',
+    interactionPolicy: { kind: mutation === 'none' ? 'immediate' : 'guided', conversationAudience: 'requester', resultAudience: mutation === 'none' ? 'invoking_chat' : 'requester' },
     pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID,
     ...(mutation === 'none' ? { requiredAccessPlane: 'group_member' as const } : {}),
     ...(mutation === 'durable' ? { privateScopeAuthorization: 'handler' as const } : {}),
@@ -580,7 +583,7 @@ function workspaceCommand(mutation: CommandMetadata['mutation']): CommandMetadat
   };
 }
 
-function workspaceAliasCommandV1(alias: WorkspaceConnectorCommandAlias): CommandMetadata {
+function workspaceAliasCommandV1(alias: WorkspaceConnectorCommandAlias): PluginCommandMetadata {
   return {
     ...workspaceCommand('durable'),
     help: {
@@ -592,11 +595,13 @@ function workspaceAliasCommandV1(alias: WorkspaceConnectorCommandAlias): Command
   };
 }
 
-function workspaceAliasCommandV2(alias: WorkspaceConnectorCommandAliasV2): CommandMetadata {
+function workspaceAliasCommandV2(alias: WorkspaceConnectorCommandAliasV2): PluginCommandMetadata {
   const supportsPrivate = alias.contexts.includes('private');
   return {
     plane: 'group_operation',
     interaction: supportsPrivate ? 'either_same_chat' : 'group_same_chat',
+    invocation: supportsPrivate ? 'either' : 'group_only',
+    interactionPolicy: { kind: 'guided', conversationAudience: 'requester', resultAudience: 'requester' },
     pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID,
     requiresManagedGroup: true,
     requiresCurrentManagedGroupMembership: true,
