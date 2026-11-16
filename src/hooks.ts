@@ -1,3 +1,4 @@
+import { privateWorkspaceConversation } from './conversation';
 import { createHash } from 'node:crypto';
 import { MediaAlbumObservations } from './mediaAlbumObservations';
 import { createWriteStream } from 'node:fs';
@@ -262,6 +263,11 @@ async function handleWorkspaceSessionMessageUnlocked(
     if (session.privatePromptSubjectId && !event.message.hasMedia) return;
     return handleWorkspaceSessionMessageV2(context, client, installationId, event, session);
   }
+  if (event.message.chatId !== (session.conversationChatId ?? session.originatingChatId)) return;
+  if (session.surface === 'group' && event.message.context === 'private') {
+    const members = await context.currentMemberIdentityIdsForScope?.(session.scopeId);
+    if (!members?.includes(event.actorIdentityId)) return [await reply(context, event, 'official.workspace-connector.scopeUnavailable')];
+  }
   if (event.message.hasMedia) {
     return handleMediaMessageV1(context, client, installationId, event, session);
   }
@@ -330,7 +336,7 @@ async function handleWorkspaceSessionMessageV2(
   if (!client.continueSessionV2) throw new Error('Workspace connector v2 client is unavailable.');
   const currentActor = event.actor.identityAddress;
   if (currentActor.identityId !== session.actorIdentityId || event.actorIdentityId !== session.actorIdentityId) return;
-  if (session.origin.surface === 'private' && event.message.chatId !== session.actorPrivateChatId) return;
+  if (event.message.chatId !== session.actorPrivateChatId) return;
   const currentMembers = await context.currentMemberIdentityIdsForScope?.(session.scopeId);
   if (!currentMembers?.includes(currentActor.identityId)) return [await reply(context, event, 'official.workspace-connector.scopeUnavailable')];
   const body = event.message.body.trim();
@@ -376,6 +382,7 @@ async function applyWorkspaceResultV2(
   session: StoredWorkspaceSessionV2,
   result: import('./contracts/workspace-connector-v0.3').WorkspaceConnectorInvocationResultV2
 ): Promise<PluginAction[]> {
+  result = privateWorkspaceConversation(result);
   const request = result.actions.find((action) => action.kind === 'request_media');
   const mediaChatId = request
     ? await resolveWorkspaceActionRouteV2(context, request.route, workspaceRouteContext(session, event.message.chatId))
@@ -805,7 +812,7 @@ async function handleMediaMessageV2(
         ...(receipt.timer ? { timer: receipt.timer } : {})
       });
     }
-    const actions = await workspaceActionsToPluginActionsV2(context, receipt.actions, {
+    const actions = await workspaceActionsToPluginActionsV2(context, privateWorkspaceConversation(receipt).actions, {
       ...workspaceRouteContext(activeSession, event.message.chatId),
       actorMentionWid: activeSession.actorMentionWid,
       quotedMessageId: event.message.id
@@ -880,7 +887,7 @@ async function retryStagedMedia(
             ...(receipt.timer ? { timer: receipt.timer } : {})
           });
         }
-        const actions = await workspaceActionsToPluginActionsV2(context, receipt.actions, {
+        const actions = await workspaceActionsToPluginActionsV2(context, privateWorkspaceConversation(receipt).actions, {
           ...workspaceRouteContext(session, retry.responseChatId),
           actorMentionWid: session.actorMentionWid
         });
@@ -1071,7 +1078,7 @@ export async function handleWorkspaceSessionTimer(
     || session.timer?.timerId !== payload.data.timerId
   ) return;
   const firedAt = new Date().toISOString();
-  const result = await client.continueSessionV2({
+  const result = privateWorkspaceConversation(await client.continueSessionV2({
     protocolVersion: 2,
     installationId,
     catalogRevision: session.catalogRevision,
@@ -1080,14 +1087,14 @@ export async function handleWorkspaceSessionTimer(
     capabilityId: workspaceSessionContinuationCapabilityId(session),
     scopeId: session.scopeId,
     origin: session.origin,
-    current: session.origin,
+    current: { chatId: session.actorPrivateChatId, surface: 'private' },
     scopeEvidence: session.scopeEvidence,
     locale: session.locale,
     eventId: `timer:${session.sessionId}:${payload.data.timerId}`,
     idempotencyKey: `timer:${session.sessionId}:${payload.data.timerId}`,
     actor: session.actor,
     input: { kind: 'timer', timerId: payload.data.timerId, firedAt }
-  });
+  }));
   const request = result.actions.find((action) => action.kind === 'request_media');
   const mediaChatId = request
     ? await resolveWorkspaceActionRouteV2(context, request.route, workspaceRouteContext(session, session.origin.chatId))

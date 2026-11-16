@@ -53,3 +53,13 @@ service and are excluded from captured history, echoes, replay, and quotations.
 Version 0.8.8 carries protocol 0.5 multiple-choice menus through durable private prompts. Multiple participant numbers produce one atomic continuation; existing single-choice sessions remain compatible.
 
 Version 0.8.9 validates media grant URLs against the configured API prefix and streams retained originals with cancellation-safe file reads. Failed uploads close their file handles and remain available for retry.
+
+## Command interaction contract
+
+This release requires WABP core API 0.4 and the matching plugin SDK. Commands
+declare invocation eligibility and the audience and length of their conversation
+through `interactionPolicy`; plugins without commands retain an empty command
+list. The host owns group-to-PM notices, the two-question allowance for brief
+clarification, and routing across assistant execution and recovered flows. Personal
+guided workflows stay private, with domain publications delivered through their
+existing authorized group publication paths.

@@ -579,17 +579,26 @@ test('delivery retry cannot reopen a user-cancelled session whose send receipt w
   assert.equal(f.prompts.length, 1);
 });
 
-test('restart recovers a pending prompt send with its original question and delivery key', async t => {
+for (const origin of ['private', 'group']) test(`restart recovers a ${origin}-origin prompt with its question, delivery key and host conversation`, async t => {
   const f = fixture(t);
   const sendPrompt = f.context.flowEngine.promptChoice;
   f.context.flowEngine.promptChoice = async () => { throw new Error('transport not ready'); };
   assert.equal((await f.start()).disposition, 'retryable_failure');
   assert.equal(f.prompts.length, 0);
+  if (origin === 'group') {
+    const session = await findWorkspaceMediaSession(f.context.dataStore, 'person-1');
+    session.origin = { chatId: 'group@g.us', surface: 'group' };
+    session.commandConversationId = 'host-conversation';
+    const pending = await f.context.dataStore.get(session.privatePromptSubjectId);
+    await f.context.dataStore.set(session.privatePromptSubjectId, { ...pending, session });
+    await storeWorkspaceSession(f.context.dataStore, session);
+  }
   f.context.flowEngine.promptChoice = sendPrompt;
   await f.restart();
   assert.equal(f.prompts.length, 1);
   assert.equal(f.prompts[0].question, 'Confirm linking?');
   assert.equal(f.prompts[0].questionSendOptions.idempotencyKey, 'workspace-private:runtime-1:workspace-v2:delivery-once');
+  assert.equal(f.prompts[0].commandConversationId, origin === 'group' ? 'host-conversation' : undefined);
   assert.equal(f.callbacks.length, 0);
 });
 

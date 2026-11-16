@@ -110,9 +110,9 @@ test('v2 delivery polling succeeds when the retired v1 delivery endpoint is unav
   }
 });
 
-test('private v2 aliases select a community scope rather than prompting for each subgroup', async (t) => {
+test('private-only v2 aliases declare their invocation boundary and select a community scope', async (t) => {
   const v2 = { protocolVersion: 2, workspaceId: 'fixture-workspace', workspaceLabel: 'Fixture workspace', revision: 1,
-    aliases: [{ namespace: 'documents', capabilityId: 'fixture.submit.v1', contexts: ['private', 'group'], descriptionByLocale: { en: 'Submit' }, usageByLocale: { en: '/documents' } }],
+    aliases: [{ namespace: 'documents', capabilityId: 'fixture.submit.v1', contexts: ['private'], descriptionByLocale: { en: 'Submit' }, usageByLocale: { en: '/documents' } }],
     capabilities: [{ capabilityId: 'fixture.submit.v1', interfaces: ['interactive'], maximumPayloadBytes: 8192, mediaMimeTypes: [], cancellationSupported: false }], ambientTriggers: [], digestSha256: digest };
   const ctx = context(storeFrom(new Map([['catalog:v1', { ...catalog(), aliases: [] }], ['catalog:v2', v2]])));
   ctx.config = { WORKSPACE_CONNECTOR_BASE_URL: 'https://workspace.example', WORKSPACE_CONNECTOR_OIDC_ISSUER: 'https://identity.example/realms/fixture', WORKSPACE_CONNECTOR_OIDC_CLIENT_ID: 'fixture', WORKSPACE_CONNECTOR_OIDC_AUDIENCE: 'fixture-api', WORKSPACE_CONNECTOR_INSTALLATION_ID: 'fixture-installation', workspaceConnectorOidcClientSecret: 'fixture-secret-for-tests' };
@@ -126,6 +126,7 @@ test('private v2 aliases select a community scope rather than prompting for each
     const commands = aliases.flatMap(alias => alias.commands ?? []);
     const metadata = commands[0]?.metadata ?? aliases.find(alias => alias.namespace === 'documents')?.metadata;
     assert.equal(metadata.privateManagedTarget.collapseCommunities, true);
+    assert.equal(metadata.invocation, 'private_only');
     assert.equal(metadata.currentManagedGroupMembershipMode, 'effective_scope');
   } finally { dispose?.(); }
 });
@@ -213,6 +214,56 @@ test('refreshes a rejected service token once and rejects an unavailable remote'
   const unavailable = new WorkspaceConnectorClient(connection, { tokens: { accessToken: async () => 'fixture-token', invalidate() {} },
     fetch: async () => new Response('Unavailable', { status: 503 }) });
   await assert.rejects(unavailable.catalog());
+});
+
+test('a v1 group invocation continues privately without changing its original scope or surface', async testContext => {
+  const rows = storeFrom();
+  const ctx = context(rows);
+  ctx.config = { WORKSPACE_CONNECTOR_BASE_URL: connection.baseUrl, WORKSPACE_CONNECTOR_OIDC_ISSUER: connection.oidcIssuer,
+    WORKSPACE_CONNECTOR_OIDC_CLIENT_ID: connection.clientId, WORKSPACE_CONNECTOR_OIDC_AUDIENCE: connection.audience,
+    WORKSPACE_CONNECTOR_INSTALLATION_ID: connection.installationId, workspaceConnectorOidcClientSecret: 'fixture-secret-for-tests' };
+  ctx.configFor = async () => ({ enabled: true, allowedCapabilities: ['fixture.submit.v1'] });
+  ctx.currentMemberIdentityIdsForScope = async () => [actor.identityId];
+  const commands = new Map();
+  let aliases;
+  ctx.router = { register: (namespace, name, metadata, handler) => commands.set(`${namespace}.${name}`, { metadata, handler }),
+    listCommands: () => [], replaceNamespaceAliasesAtomically: (_owner, value) => { aliases = value; } };
+  testContext.mock.method(global, 'setInterval', () => ({ unref() {} }));
+  testContext.mock.method(WorkspaceConnectorClient.prototype, 'catalog', async () => catalog());
+  testContext.mock.method(WorkspaceConnectorClient.prototype, 'catalogV2', async () => { throw new Error('v1 authority'); });
+  const result = { protocolVersion: 1, invocationId: 'fixture-invocation', sessionId: 'fixture-session',
+    sessionExpiresAt: '2099-01-01T00:00:00.000Z', actions: [{ kind: 'reply', text: 'Next detail?' }] };
+  testContext.mock.method(WorkspaceConnectorClient.prototype, 'invoke', async () => result);
+  await plugin.registerCommands(ctx);
+  assert.equal(aliases.find(alias => alias.namespace === 'documents').metadata.invocation, 'group_only');
+  const address = { ...actor, canonicalWid: 'fixture@c.us', deliveryChatId: 'fixture@c.us', aliases: ['fixture@c.us'] };
+  const messageActor = { wid: 'fixture@c.us', fromMe: false, identityAddress: address };
+  const command = commands.get('workspace.*');
+  assert.equal(command.metadata.interactionPolicy.resultAudience, 'requester');
+  assert.deepEqual(await command.handler({ t, locale: 'en', scopeId: 'fixture-scope', actor: messageActor,
+    message: { id: 'invocation', context: 'group', chatId: 'fixture@g.us' },
+    command: { namespace: 'workspace', subcommand: 'documents', args: [] } }), { handled: true, text: 'Next detail?' });
+  assert.deepEqual(Object.fromEntries(Object.entries(await findWorkspaceMediaSession(rows, actor.identityId)).filter(([key]) =>
+    ['scopeId', 'surface', 'originatingChatId', 'conversationChatId'].includes(key))), {
+    scopeId: 'fixture-scope', surface: 'group', originatingChatId: 'fixture@g.us', conversationChatId: 'fixture@c.us'
+  });
+  const requests = [];
+  const client = { continueSession: async request => { requests.push(request); return result; } };
+  const event = { actorIdentityId: actor.identityId, actor: messageActor, scopeId: 'fixture-scope',
+    message: { id: 'answer', body: 'Detail', context: 'private', chatId: 'fixture@c.us', fromMe: false }, isCommandLike: false };
+  const actions = await handleWorkspaceSessionMessage(ctx, client, connection.installationId, event);
+  assert.equal(actions[0].chatId, 'fixture@c.us');
+  assert.equal(requests[0].chatId, 'fixture@g.us');
+  assert.equal(requests[0].surface, 'group');
+  assert.equal(requests[0].scopeId, 'fixture-scope');
+  assert.equal((await findWorkspaceMediaSession(rows, actor.identityId)).conversationChatId, 'fixture@c.us');
+  assert.equal(await handleWorkspaceSessionMessage(ctx, client, connection.installationId, {
+    ...event, message: { ...event.message, context: 'group', chatId: 'fixture@g.us' }
+  }), undefined);
+  ctx.currentMemberIdentityIdsForScope = async () => [];
+  assert.equal((await handleWorkspaceSessionMessage(ctx, client, connection.installationId, event))[0].text,
+    t('official.workspace-connector.scopeUnavailable'));
+  assert.equal(requests.length, 1);
 });
 
 test('includes complete Portuguese messages and unmodified licensed protocol bytes', () => {

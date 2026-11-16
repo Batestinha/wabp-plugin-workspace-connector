@@ -1,3 +1,4 @@
+import { privateWorkspaceConversation } from './conversation';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { FlowPromptLock } from '@wabs/plugin-sdk/flow-prompts';
@@ -109,6 +110,7 @@ async function persistWorkspacePrivatePromptReceipt(context: PromptDeliveryConte
   const { session, question: prompt, idempotencyKey } = record;
   const subjectId = promptSubjectId(idempotencyKey), expiresAt = new Date(record.expiresAt);
   const delivered = await engine.promptChoice({
+    ...(session.commandConversationId ? { commandConversationId: session.commandConversationId } : {}),
     purpose: WORKSPACE_PRIVATE_CHOICE_PURPOSE, subjectType: promptSubjectType(engine), subjectId,
     question: prompt, options: session.choices,
     ...(session.choices.length ? {} : { freeTextOption: { id: 'workspace-text' } }),
@@ -171,7 +173,7 @@ async function adoptWorkspacePrivateChoiceUnlocked(
   const engine = context.flowEngine;
   if (!engine) return false;
   const session = await findWorkspaceMediaSession(context.dataStore, actorIdentityId);
-  if (!session || session.schemaVersion !== 2 || session.origin.surface !== 'private'
+  if (!session || session.schemaVersion !== 2 || (session.origin.surface !== 'private' && !session.commandConversationId)
     || (!session.choices.length && session.timer) || session.acceptedMessageKinds) return false;
   const pending = session.privatePromptSubjectId
     ? promptRecordSchema.safeParse(await context.dataStore.get(session.privatePromptSubjectId)) : undefined;
@@ -286,7 +288,7 @@ async function continuePrivateChoice(
     // Replayed locks reuse the remote result, including after a local send failure.
     await context.dataStore.set(lock.subjectId, record);
   }
-  const result = record.result;
+  const result = privateWorkspaceConversation(record.result);
   const route = { originChatId: session.origin.chatId, currentChatId: session.actorPrivateChatId,
     scopeId: session.scopeId, actorPrivateChatId: session.actorPrivateChatId, actorMentionWid: session.actorMentionWid };
   const nextChoice = result.actions.find(action => action.kind === 'choice');
