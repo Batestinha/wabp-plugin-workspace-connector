@@ -807,7 +807,7 @@ async function handleMediaMessageV2(
         ...(receipt.timer ? { timer: receipt.timer } : {})
       });
     }
-    const actions = await workspaceActionsToPluginActionsV2(context, receipt.actions, {
+    const actions = await workspaceActionsToPluginActionsV2(context, privateWorkspaceConversation(receipt).actions, {
       ...workspaceRouteContext(activeSession, event.message.chatId),
       actorMentionWid: activeSession.actorMentionWid,
       quotedMessageId: event.message.id
@@ -882,7 +882,7 @@ async function retryStagedMedia(
             ...(receipt.timer ? { timer: receipt.timer } : {})
           });
         }
-        const actions = await workspaceActionsToPluginActionsV2(context, receipt.actions, {
+        const actions = await workspaceActionsToPluginActionsV2(context, privateWorkspaceConversation(receipt).actions, {
           ...workspaceRouteContext(session, retry.responseChatId),
           actorMentionWid: session.actorMentionWid
         });
