@@ -215,6 +215,54 @@ test('refreshes a rejected service token once and rejects an unavailable remote'
   await assert.rejects(unavailable.catalog());
 });
 
+test('a v1 group invocation continues privately without changing its original scope or surface', async testContext => {
+  const rows = storeFrom();
+  const ctx = context(rows);
+  ctx.config = { WORKSPACE_CONNECTOR_BASE_URL: connection.baseUrl, WORKSPACE_CONNECTOR_OIDC_ISSUER: connection.oidcIssuer,
+    WORKSPACE_CONNECTOR_OIDC_CLIENT_ID: connection.clientId, WORKSPACE_CONNECTOR_OIDC_AUDIENCE: connection.audience,
+    WORKSPACE_CONNECTOR_INSTALLATION_ID: connection.installationId, workspaceConnectorOidcClientSecret: connection.clientSecret };
+  ctx.configFor = async () => ({ enabled: true, allowedCapabilities: ['fixture.submit.v1'] });
+  ctx.currentMemberIdentityIdsForScope = async () => [actor.identityId];
+  const commands = new Map();
+  ctx.router = { register: (namespace, name, metadata, handler) => commands.set(`${namespace}.${name}`, { metadata, handler }),
+    listCommands: () => [], replaceNamespaceAliasesAtomically() {} };
+  testContext.mock.method(global, 'setInterval', () => ({ unref() {} }));
+  testContext.mock.method(WorkspaceConnectorClient.prototype, 'catalog', async () => catalog());
+  testContext.mock.method(WorkspaceConnectorClient.prototype, 'catalogV2', async () => { throw new Error('v1 authority'); });
+  const result = { protocolVersion: 1, invocationId: 'fixture-invocation', sessionId: 'fixture-session',
+    sessionExpiresAt: '2099-01-01T00:00:00.000Z', actions: [{ kind: 'reply', text: 'Next detail?' }] };
+  testContext.mock.method(WorkspaceConnectorClient.prototype, 'invoke', async () => result);
+  await plugin.registerCommands(ctx);
+  const address = { ...actor, canonicalWid: 'fixture@c.us', deliveryChatId: 'fixture@c.us', aliases: ['fixture@c.us'] };
+  const messageActor = { wid: 'fixture@c.us', fromMe: false, identityAddress: address };
+  const command = commands.get('workspace.*');
+  assert.equal(command.metadata.interactionPolicy.resultAudience, 'requester');
+  assert.deepEqual(await command.handler({ t, locale: 'en', scopeId: 'fixture-scope', actor: messageActor,
+    message: { id: 'invocation', context: 'group', chatId: 'fixture@g.us' },
+    command: { namespace: 'workspace', subcommand: 'documents', args: [] } }), { handled: true, text: 'Next detail?' });
+  assert.deepEqual(Object.fromEntries(Object.entries(await findWorkspaceMediaSession(rows, actor.identityId)).filter(([key]) =>
+    ['scopeId', 'surface', 'originatingChatId', 'conversationChatId'].includes(key))), {
+    scopeId: 'fixture-scope', surface: 'group', originatingChatId: 'fixture@g.us', conversationChatId: 'fixture@c.us'
+  });
+  const requests = [];
+  const client = { continueSession: async request => { requests.push(request); return result; } };
+  const event = { actorIdentityId: actor.identityId, actor: messageActor, scopeId: 'fixture-scope',
+    message: { id: 'answer', body: 'Detail', context: 'private', chatId: 'fixture@c.us', fromMe: false }, isCommandLike: false };
+  const actions = await handleWorkspaceSessionMessage(ctx, client, connection.installationId, event);
+  assert.equal(actions[0].chatId, 'fixture@c.us');
+  assert.equal(requests[0].chatId, 'fixture@g.us');
+  assert.equal(requests[0].surface, 'group');
+  assert.equal(requests[0].scopeId, 'fixture-scope');
+  assert.equal((await findWorkspaceMediaSession(rows, actor.identityId)).conversationChatId, 'fixture@c.us');
+  assert.equal(await handleWorkspaceSessionMessage(ctx, client, connection.installationId, {
+    ...event, message: { ...event.message, context: 'group', chatId: 'fixture@g.us' }
+  }), undefined);
+  ctx.currentMemberIdentityIdsForScope = async () => [];
+  assert.equal((await handleWorkspaceSessionMessage(ctx, client, connection.installationId, event))[0].text,
+    t('official.workspace-connector.scopeUnavailable'));
+  assert.equal(requests.length, 1);
+});
+
 test('includes complete Portuguese messages and unmodified licensed protocol bytes', () => {
   const metadata = require('../wa-plugin.json');
   const pt = require('../locales/pt-PT/official.workspace-connector.json');

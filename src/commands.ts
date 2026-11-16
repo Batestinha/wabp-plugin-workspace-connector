@@ -247,12 +247,13 @@ async function invokeWorkspaceAliasV1(
       actorIdentityId: actor.identityId,
       actor: workspaceActor,
       scopeId,
-      chatId: actor.deliveryChatId,
+      chatId: ctx.message.chatId,
+      conversationChatId: actor.deliveryChatId,
       groupWid: ctx.message.chatId,
       capabilityId: alias.capabilityId,
       catalogRevision: catalog.revision,
       catalogDigestSha256: catalog.digestSha256,
-      surface: 'private',
+      surface,
       locale: ctx.locale
     });
   }

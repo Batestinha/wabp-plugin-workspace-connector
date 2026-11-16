@@ -28,6 +28,7 @@ const storedSessionV1Schema = z.object({
   actor: WorkspaceConnectorActorSchema,
   scopeId: z.string().min(1).max(512),
   originatingChatId: z.string().min(1).max(512),
+  conversationChatId: z.string().min(1).max(512).optional(),
   groupWid: z.string().min(1).max(512),
   surface: z.enum(['private', 'group']),
   locale: z.string().trim().min(2).max(35),
@@ -121,6 +122,7 @@ export async function rememberWorkspaceSession(input: {
   actor: z.infer<typeof WorkspaceConnectorActorSchema>;
   scopeId: string;
   chatId: string;
+  conversationChatId?: string | undefined;
   groupWid: string;
   capabilityId: string;
   catalogRevision: number;
@@ -145,6 +147,7 @@ export async function rememberWorkspaceSession(input: {
     actor: input.actor,
     scopeId: input.scopeId,
     originatingChatId: input.chatId,
+    conversationChatId: input.conversationChatId ?? previousV1?.conversationChatId,
     groupWid: input.groupWid,
     surface: input.surface,
     locale: input.locale,
@@ -366,7 +369,7 @@ export async function forgetWorkspaceMediaSession(
 
 export function workspaceSessionRouteChatIds(session: StoredWorkspaceMediaSession): string[] {
   return [...new Set(session.schemaVersion === 1
-    ? [session.originatingChatId]
+    ? [session.conversationChatId ?? session.originatingChatId]
     : [session.origin.chatId, session.actorPrivateChatId, session.mediaChatId].filter(
         (value): value is string => Boolean(value)
       ))];

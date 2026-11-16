@@ -263,6 +263,11 @@ async function handleWorkspaceSessionMessageUnlocked(
     if (session.privatePromptSubjectId && !event.message.hasMedia) return;
     return handleWorkspaceSessionMessageV2(context, client, installationId, event, session);
   }
+  if (event.message.chatId !== (session.conversationChatId ?? session.originatingChatId)) return;
+  if (session.surface === 'group' && event.message.context === 'private') {
+    const members = await context.currentMemberIdentityIdsForScope?.(session.scopeId);
+    if (!members?.includes(event.actorIdentityId)) return [await reply(context, event, 'official.workspace-connector.scopeUnavailable')];
+  }
   if (event.message.hasMedia) {
     return handleMediaMessageV1(context, client, installationId, event, session);
   }
