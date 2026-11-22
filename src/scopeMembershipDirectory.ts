@@ -35,12 +35,18 @@ export async function refreshWorkspaceScopeMemberships(
   // Timestamp the start of authoritative reads, never the end of cached processing.
   const capturedAt = new Date().toISOString();
   const enabledScopes = await context.listEnabledScopes();
-  const scopes = await Promise.all(enabledScopes.map(async (scope) => ({
-    scopeId: scope.scopeId,
-    memberIdentityIds: [...new Set(
+  const scopes = await Promise.all(enabledScopes.map(async (scope) => {
+    const memberIdentityIds = [...new Set(
       await context.currentMemberIdentityIdsForScope!(scope.scopeId)
-    )].sort((left, right) => left.localeCompare(right))
-  })));
+    )].sort((left, right) => left.localeCompare(right));
+    const suspendedIdentityIds = await suspendedNonMembers(context, scope.scopeId, memberIdentityIds);
+    // The field is sent only when someone is suspended, so unchanged directories keep their digest.
+    return {
+      scopeId: scope.scopeId,
+      memberIdentityIds,
+      ...(suspendedIdentityIds.length ? { suspendedIdentityIds } : {})
+    };
+  }));
   scopes.sort((left, right) => left.scopeId.localeCompare(right.scopeId));
 
   const payloadSha256 = createHash('sha256')
@@ -89,6 +95,20 @@ export async function refreshWorkspaceScopeMemberships(
   });
   await publishPending(context, client, installationId, request);
   return true;
+}
+
+async function suspendedNonMembers(
+  context: PluginRuntimeContext,
+  scopeId: string,
+  memberIdentityIds: readonly string[]
+): Promise<string[]> {
+  if (!context.memberStandingsForScope) return [];
+  const members = new Set(memberIdentityIds);
+  const standings = await context.memberStandingsForScope(scopeId);
+  return [...new Set(standings
+    .filter((standing) => standing.standing === 'suspended' && !members.has(standing.identityId))
+    .map((standing) => standing.identityId))]
+    .sort((left, right) => left.localeCompare(right));
 }
 
 async function publishPending(

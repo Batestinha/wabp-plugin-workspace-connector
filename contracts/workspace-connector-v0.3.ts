@@ -724,8 +724,25 @@ export const WorkspaceScopeMembershipReplaceV1Schema = z.object({
     memberIdentityIds: z.array(opaqueId).max(50_000)
       .refine((values) => new Set(values).size === values.length, {
         message: 'member identity IDs must be unique'
+      }),
+    /** Suspended identities: not members, but the platform keeps their archive reads. */
+    suspendedIdentityIds: z.array(opaqueId).max(50_000)
+      .refine((values) => new Set(values).size === values.length, {
+        message: 'suspended identity IDs must be unique'
       })
-  }).strict()).max(5_000)
+      .optional()
+  }).strict().superRefine((scope, context) => {
+    const members = new Set(scope.memberIdentityIds);
+    for (const [index, identityId] of (scope.suspendedIdentityIds ?? []).entries()) {
+      if (members.has(identityId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['suspendedIdentityIds', index],
+          message: 'a suspended identity cannot also be a member'
+        });
+      }
+    }
+  })).max(5_000)
 }).strict().superRefine((value, context) => {
   const scopeIds = new Set<string>();
   for (const [index, scope] of value.scopes.entries()) {

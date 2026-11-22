@@ -18,6 +18,8 @@ export type PluginCommandContext = IntegrationCommandContext<WorkspaceConnectorD
 };
 export type PluginRuntimeContext = IntegrationRuntimeContext<WorkspaceConnectorDeploymentConfig> & {
   flowEngine?: WorkspacePromptEngine | undefined;
+  /** WABP core API 0.3.24: active moderation standings of a scope where this plugin is enabled. */
+  memberStandingsForScope?: ((scopeId: string) => Promise<Array<{ identityId: string; standing: 'suspended' | 'expelled' }>>) | undefined;
 };
 export type PluginServiceRegistrationContext = IntegrationServiceContext<WorkspaceConnectorDeploymentConfig>;
 export type BotPlugin = IntegrationPlugin<WorkspaceConnectorDeploymentConfig>;
