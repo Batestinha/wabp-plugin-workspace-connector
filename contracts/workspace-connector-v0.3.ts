@@ -194,6 +194,7 @@ export const WorkspaceConnectorProjectionReceiptSchema = z.object({
 }).strict();
 
 export const WorkspaceConnectorDeliverySchema = z.object({
+  origin: z.object({ capabilityId: id, scopeId: opaqueId }).strict().optional(),
   protocolVersion: z.literal(WORKSPACE_CONNECTOR_PROTOCOL_VERSION),
   deliveryId: opaqueId,
   target: z.discriminatedUnion('kind', [
@@ -653,6 +654,7 @@ export const WorkspaceConnectorStartSessionActionV2Schema = z.object({
 }).strict();
 
 export const WorkspaceConnectorDeliveryV2Schema = z.object({
+  origin: z.object({ capabilityId: id, scopeId: opaqueId }).strict().optional(),
   protocolVersion: z.literal(WORKSPACE_CONNECTOR_PROTOCOL_VERSION_V2),
   deliveryId: opaqueId,
   target: z.discriminatedUnion('kind', [

@@ -1,3 +1,4 @@
+import { workspaceScope } from './ownership';
 import { createHash } from 'node:crypto';
 import { MediaAlbumObservations } from './mediaAlbumObservations';
 import { createWriteStream } from 'node:fs';
@@ -103,7 +104,10 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
   const refreshScopeDirectory = (): Promise<void> => {
     if (scopeDirectoryRefresh) return scopeDirectoryRefresh;
     scopeDirectoryRefresh = (async () => {
-      if (!await workspaceV2IsInstalled(context)) return;
+      const fresh = await client.catalogV2();
+      assertV2CatalogDigest(fresh);
+      const cached = WorkspaceConnectorCatalogV2Schema.safeParse(await context.dataStore.get('catalog:v2'));
+      if (!cached.success || cached.data.digestSha256 !== fresh.digestSha256) await context.dataStore.set('catalog:v2', fresh);
       await refreshWorkspaceScopeDirectory(context, client, connection.installationId);
     })()
       .catch((error) => {
@@ -138,7 +142,7 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
       if (await workspaceV2IsInstalled(context)) {
         const privateScopes: Record<string, string[]> = {};
         for (const scope of await context.listEnabledScopes?.() ?? []) {
-          const config = parseWorkspaceConnectorConfig(await context.configFor(scope.scopeId));
+          const config = await workspaceScope(context, scope.scopeId);
           if (config.enabled) privateScopes[scope.scopeId] = config.allowedCapabilities;
         }
         const deliveriesV2 = await client.claimDeliveriesV2(20, undefined, privateScopes);
@@ -258,6 +262,15 @@ async function handleWorkspaceSessionMessageUnlocked(
     event.message.chatId
   );
   if (!session) return;
+  const capability = session.schemaVersion === 2 ? workspaceSessionContinuationCapabilityId(session) : session.capabilityId;
+  const grant = (await workspaceScope(context, session.scopeId, event.actorIdentityId)).grants.find(item => item.capabilityId === capability);
+  if (!grant) return;
+  if (event.message.hasMedia) {
+    if (session.maximumFileBytes && grant.maximumFileBytes) session.maximumFileBytes = Math.min(session.maximumFileBytes, grant.maximumFileBytes);
+    if (grant.maximumFiles && session.mediaMessageIds.length >= grant.maximumFiles && !session.mediaMessageIds.includes(event.message.id)) {
+      return [await reply(context, event, 'official.integration-manager.mediaLimitReached')];
+    }
+  }
   if (session.schemaVersion === 2) {
     if (session.privatePromptSubjectId && !event.message.hasMedia) return;
     return handleWorkspaceSessionMessageV2(context, client, installationId, event, session);
@@ -271,7 +284,7 @@ async function handleWorkspaceSessionMessageUnlocked(
     ? resolveWorkspaceChoice(session.choices, body)
     : undefined;
   if (session.choices.length > 0 && !choiceId) {
-    return [await reply(context, event, 'official.workspace-connector.invalidChoice')];
+    return [await reply(context, event, 'official.integration-manager.invalidChoice')];
   }
   try {
     const result = await client.continueSession({
@@ -312,7 +325,7 @@ async function handleWorkspaceSessionMessageUnlocked(
     return [workspaceActionReply(event, result.actions)];
   } catch (error) {
     context.logger.warn({ error, sessionId: session.sessionId }, 'Workspace session continuation failed');
-    return [await reply(context, event, 'official.workspace-connector.unavailable')];
+    return [await reply(context, event, 'official.integration-manager.unavailable')];
   }
 }
 
@@ -327,12 +340,12 @@ async function handleWorkspaceSessionMessageV2(
     if (session.mediaChatId !== event.message.chatId) return;
     return handleMediaMessageV2(context, client, installationId, event, session);
   }
-  if (!client.continueSessionV2) throw new Error('Workspace connector v2 client is unavailable.');
+  if (!client.continueSessionV2) throw new Error('Integration Manager v2 client is unavailable.');
   const currentActor = event.actor.identityAddress;
   if (currentActor.identityId !== session.actorIdentityId || event.actorIdentityId !== session.actorIdentityId) return;
   if (session.origin.surface === 'private' && event.message.chatId !== session.actorPrivateChatId) return;
   const currentMembers = await context.currentMemberIdentityIdsForScope?.(session.scopeId);
-  if (!currentMembers?.includes(currentActor.identityId)) return [await reply(context, event, 'official.workspace-connector.scopeUnavailable')];
+  if (!currentMembers?.includes(currentActor.identityId)) return [await reply(context, event, 'official.integration-manager.scopeUnavailable')];
   const body = event.message.body.trim();
   if (!body || (session.acceptedMessageKinds && session.choices.length === 0)) return;
   const choiceId = session.choices.length > 0
@@ -340,7 +353,7 @@ async function handleWorkspaceSessionMessageV2(
     : undefined;
   const choiceIds = session.selectionRule === 'MULTIPLE' ? resolveWorkspaceChoices(session.choices, body) : undefined;
   if (session.choices.length > 0 && !choiceId && !choiceIds) {
-    return [await reply(context, event, 'official.workspace-connector.invalidChoice')];
+    return [await reply(context, event, 'official.integration-manager.invalidChoice')];
   }
   try {
     const result = await client.continueSessionV2({
@@ -366,7 +379,7 @@ async function handleWorkspaceSessionMessageV2(
     return await applyWorkspaceResultV2(context, event, session, result);
   } catch (error) {
     context.logger.warn({ error, sessionId: session.sessionId }, 'Workspace v2 session continuation failed');
-    return [await reply(context, event, 'official.workspace-connector.unavailable')];
+    return [await reply(context, event, 'official.integration-manager.unavailable')];
   }
 }
 
@@ -413,12 +426,16 @@ async function applyWorkspaceResultV2(
 }
 
 export async function deliverWorkspaceDelivery(
-  context: Pick<PluginRuntimeContext, 'configFor' | 'resolveStableIdentityById' | 'sendText'>,
+  context: Pick<PluginRuntimeContext, 'catalog' | 'configFor' | 'resolveStableIdentityById' | 'sendText'>,
   delivery: WorkspaceConnectorDelivery,
   now = new Date()
 ): Promise<WorkspaceConnectorDeliveryAck> {
   if (new Date(delivery.expiresAt).getTime() <= now.getTime()) {
     return ackV1(delivery.deliveryId, 'terminal_failure', undefined, 'delivery.expired');
+  }
+  if (!delivery.origin || !(await workspaceScope(context, delivery.origin.scopeId)).grants.some(
+    grant => grant.capabilityId === delivery.origin!.capabilityId && grant.announcementsEnabled)) {
+    return ackV1(delivery.deliveryId, 'terminal_failure', undefined, 'capability.disabled');
   }
   if (!context.sendText) {
     return ackV1(delivery.deliveryId, 'terminal_failure', undefined, 'delivery.channel_unavailable');
@@ -454,7 +471,7 @@ export async function deliverWorkspaceDelivery(
 export async function deliverWorkspaceDeliveryV2(
   context: Pick<
     PluginRuntimeContext,
-    | 'configFor'
+    | 'catalog' | 'configFor'
     | 'coveredGroupsForScope'
     | 'resolveStableIdentityById'
     | 'sendText'
@@ -485,9 +502,22 @@ async function executeWorkspaceDeliveryV2(
   }
   let chatId: string;
   try {
+    const origin = delivery.origin;
+    if (!origin || !(await workspaceScope(context, origin.scopeId)).grants.some(grant =>
+      grant.capabilityId === origin.capabilityId && grant.announcementsEnabled) ||
+      (delivery.action.kind === 'start_session' && (delivery.action.scopeId !== origin.scopeId ||
+        delivery.action.capabilityId !== origin.capabilityId))) {
+      return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'capability.disabled');
+    }
+    if (!client.catalogV2) return ackV2(delivery.deliveryId, 'retryable_failure', undefined, 'catalog.unavailable');
+    const catalog = await client.catalogV2();
+    assertV2CatalogDigest(catalog);
+    if (!catalog.capabilities.some(capability => capability.capabilityId === origin.capabilityId)) {
+      return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'capability.disabled');
+    }
     chatId = await resolveDeliveryChatV2(context, delivery);
   } catch {
-    return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'scope.unavailable');
+    return ackV2(delivery.deliveryId, 'retryable_failure', undefined, 'scope.unavailable');
   }
   try {
     if (delivery.action.kind === 'start_session') {
@@ -495,7 +525,7 @@ async function executeWorkspaceDeliveryV2(
         return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'delivery.channel_unavailable');
       }
       const action = delivery.action;
-      const scoped = parseWorkspaceConnectorConfig(await context.configFor(action.scopeId));
+      const scoped = await workspaceScope(context, action.scopeId);
       const catalog = await client.catalogV2();
       assertV2CatalogDigest(catalog);
       if (!scoped.enabled || !scoped.allowedCapabilities.includes(action.capabilityId)
@@ -648,11 +678,11 @@ async function handleMediaMessageV1(
   if (!context.mediaStore || !session.acceptedMimeTypes || !session.maximumFileBytes || !session.maximumFiles) return;
   const declaredMimeType = (event.message.media?.mimeType ?? event.message.mediaMimeType ?? '').toLowerCase();
   if (!mimeAccepted(declaredMimeType, session.acceptedMimeTypes)) {
-    return [await reply(context, event, 'official.workspace-connector.mediaRejected')];
+    return [await reply(context, event, 'official.integration-manager.mediaRejected')];
   }
   const declaredBytes = event.message.media?.sizeBytes;
   if (declaredBytes !== undefined && declaredBytes > session.maximumFileBytes) {
-    return [await reply(context, event, 'official.workspace-connector.mediaTooLarge')];
+    return [await reply(context, event, 'official.integration-manager.mediaTooLarge')];
   }
   const stagedResult = await stageWorkspaceMedia(context, event, session.maximumFileBytes);
   if (!stagedResult.ok) {
@@ -660,26 +690,27 @@ async function handleMediaMessageV1(
       context,
       event,
       stagedResult.reason === 'too-large'
-        ? 'official.workspace-connector.mediaTooLarge'
-        : 'official.workspace-connector.mediaUnavailable'
+        ? 'official.integration-manager.mediaTooLarge'
+        : 'official.integration-manager.mediaUnavailable'
     )];
   }
   const staged = stagedResult.media;
   if (!mimeAccepted(staged.mimeType.toLowerCase(), session.acceptedMimeTypes)) {
     await context.mediaStore.delete(staged.id).catch(() => undefined);
-    return [await reply(context, event, 'official.workspace-connector.mediaRejected')];
+    return [await reply(context, event, 'official.integration-manager.mediaRejected')];
   }
   const reservation = await reserveWorkspaceMediaFile(context.dataStore, session, event.message.id);
   if (reservation.disposition !== 'reserved') {
     await context.mediaStore.delete(staged.id).catch(() => undefined);
     return reservation.disposition === 'limit'
-      ? [await reply(context, event, 'official.workspace-connector.mediaLimitReached')]
+      ? [await reply(context, event, 'official.integration-manager.mediaLimitReached')]
       : undefined;
   }
   const activeSession = reservation.session;
   if (activeSession.schemaVersion !== 1) throw new Error('Workspace session version changed during media reservation.');
   const fileId = mediaFileId(activeSession.sessionId, event.message.id);
   let retry = newWorkspaceMediaRetry({
+    scopeId: session.scopeId,
     sessionId: activeSession.sessionId,
     capabilityId: activeSession.capabilityId,
     fileId,
@@ -713,7 +744,7 @@ async function handleMediaMessageV1(
     retry = rescheduleWorkspaceMediaRetry(retry);
     await storeWorkspaceMediaRetry(context.dataStore, retry);
     context.logger.warn({ err: error, sessionId: activeSession.sessionId }, 'Workspace media upload failed');
-    return [await reply(context, event, 'official.workspace-connector.mediaUnavailable')];
+    return [await reply(context, event, 'official.integration-manager.mediaUnavailable')];
   }
 }
 
@@ -727,18 +758,18 @@ async function handleMediaMessageV2(
   if (!session.acceptedMessageKinds || !session.acceptedMimeTypes || !session.maximumFileBytes || !session.maximumFiles) return;
   const messageKind = workspaceMessageKind(event.message.type);
   if (!messageKind || !session.acceptedMessageKinds.includes(messageKind)) {
-    return [await reply(context, event, 'official.workspace-connector.sendAsAcceptedKind')];
+    return [await reply(context, event, 'official.integration-manager.sendAsAcceptedKind')];
   }
   if (!context.mediaStore) {
-    return [await reply(context, event, 'official.workspace-connector.mediaUnavailable')];
+    return [await reply(context, event, 'official.integration-manager.mediaUnavailable')];
   }
   const declaredMimeType = (event.message.media?.mimeType ?? event.message.mediaMimeType ?? '').toLowerCase();
   if (!mimeAccepted(declaredMimeType, session.acceptedMimeTypes)) {
-    return [await reply(context, event, 'official.workspace-connector.mediaRejected')];
+    return [await reply(context, event, 'official.integration-manager.mediaRejected')];
   }
   const declaredBytes = event.message.media?.sizeBytes;
   if (declaredBytes !== undefined && declaredBytes > session.maximumFileBytes) {
-    return [await reply(context, event, 'official.workspace-connector.mediaTooLarge')];
+    return [await reply(context, event, 'official.integration-manager.mediaTooLarge')];
   }
   const stagedResult = await stageWorkspaceMedia(context, event, session.maximumFileBytes);
   if (!stagedResult.ok) {
@@ -746,26 +777,27 @@ async function handleMediaMessageV2(
       context,
       event,
       stagedResult.reason === 'too-large'
-        ? 'official.workspace-connector.mediaTooLarge'
-        : 'official.workspace-connector.mediaUnavailable'
+        ? 'official.integration-manager.mediaTooLarge'
+        : 'official.integration-manager.mediaUnavailable'
     )];
   }
   const staged = stagedResult.media;
   if (!mimeAccepted(staged.mimeType.toLowerCase(), session.acceptedMimeTypes)) {
     await context.mediaStore.delete(staged.id).catch(() => undefined);
-    return [await reply(context, event, 'official.workspace-connector.mediaRejected')];
+    return [await reply(context, event, 'official.integration-manager.mediaRejected')];
   }
   const reservation = await reserveWorkspaceMediaFile(context.dataStore, session, event.message.id);
   if (reservation.disposition !== 'reserved') {
     await context.mediaStore.delete(staged.id).catch(() => undefined);
     return reservation.disposition === 'limit'
-      ? [await reply(context, event, 'official.workspace-connector.mediaLimitReached')]
+      ? [await reply(context, event, 'official.integration-manager.mediaLimitReached')]
       : undefined;
   }
   const activeSession = reservation.session;
   if (activeSession.schemaVersion !== 2) throw new Error('Workspace session version changed during media reservation.');
   const fileId = mediaFileId(activeSession.sessionId, event.message.id);
   let retry = newWorkspaceMediaRetryV2({
+    scopeId: session.scopeId,
     sessionId: activeSession.sessionId,
     capabilityId: workspaceSessionContinuationCapabilityId(activeSession),
     fileId,
@@ -818,7 +850,7 @@ async function handleMediaMessageV2(
     retry = rescheduleWorkspaceMediaRetry(retry);
     await storeWorkspaceMediaRetry(context.dataStore, retry);
     context.logger.warn({ err: error, sessionId: activeSession.sessionId }, 'Workspace v2 media upload failed');
-    return [await reply(context, event, 'official.workspace-connector.mediaUnavailable')];
+    return [await reply(context, event, 'official.integration-manager.mediaUnavailable')];
   }
 }
 
@@ -851,6 +883,10 @@ async function retryStagedMedia(
       continue;
     }
     try {
+      const binding = await findWorkspaceMediaSession(context.dataStore, retry.metadata.actorIdentityId, retry.responseChatId);
+      const originScopeId = retry.scopeId ?? (binding?.sessionId === retry.sessionId ? binding.scopeId : undefined);
+      if (!originScopeId || !(await workspaceScope(context, originScopeId, retry.metadata.actorIdentityId))
+        .allowedCapabilities.includes(retry.capabilityId)) continue;
       const receipt = await transferStagedMedia(context, client, installationId, retry);
       await Promise.all([
         deleteWorkspaceMediaRetry(context.dataStore, retry),
@@ -952,7 +988,7 @@ async function transferStagedMedia(
     return upload(body => client.uploadGrantedMedia(grant, body));
   }
   if (!client.requestMediaGrantV2 || !client.uploadGrantedMediaV2) {
-    throw new Error('Workspace connector v2 media client is unavailable.');
+    throw new Error('Integration Manager v2 media client is unavailable.');
   }
   const grant = await client.requestMediaGrantV2({
     protocolVersion: 2,
@@ -977,8 +1013,9 @@ async function enqueueWorkspaceAmbientEvent(
   const eventType = 'whatsapp.media-album.v1';
   const trigger = catalog.data.ambientTriggers.find((candidate) => candidate.eventType === eventType);
   if (!trigger) return;
-  const scoped = parseWorkspaceConnectorConfig(await context.configFor(event.scopeId, event.actorIdentityId));
-  if (!scoped.enabled || !scoped.allowedCapabilities.includes(trigger.capabilityId)) return;
+  const scoped = await workspaceScope(context, event.scopeId, event.actorIdentityId);
+  if (!scoped.grants.some(grant => grant.capabilityId === trigger.capabilityId &&
+    grant.triggersEnabled && grant.triggers?.includes(trigger.triggerId))) return;
   if (!albumObservations.observe({ scopeId: event.scopeId, chatId: event.message.chatId, actorIdentityId: event.actorIdentityId, messageId: event.message.id, messageType: event.message.type ?? '', hasMedia: event.message.hasMedia, receivedAt: event.receivedAt })) return;
   const locale = await context.i18n.resolveIdentityLocale(event.actorIdentityId, event.scopeId);
   const actorAddress = event.actor.identityAddress;
@@ -1040,9 +1077,13 @@ async function handleWorkspaceAmbientJob(
 ): Promise<PluginAction[] | void> {
   const payload = ambientJobPayloadSchema.safeParse(job.payload);
   if (!payload.success) return;
-  if (!client.publishAmbientEventV2) throw new Error('Workspace connector v2 ambient client is unavailable.');
+  if (!client.publishAmbientEventV2) throw new Error('Integration Manager v2 ambient client is unavailable.');
   try {
-    const result = await client.publishAmbientEventV2(payload.data.event);
+    const event = payload.data.event;
+    const scope = await workspaceScope(context, event.scopeId, event.actor.identityId);
+    if (!scope.grants.some(grant => grant.capabilityId === event.capabilityId && grant.triggersEnabled &&
+      grant.triggers?.includes(event.triggerId))) return;
+    const result = await client.publishAmbientEventV2(event);
     return workspaceActionsToPluginActionsV2(context, result.actions, {
       originChatId: payload.data.event.origin.chatId,
       currentChatId: payload.data.event.origin.chatId,
@@ -1064,12 +1105,14 @@ export async function handleWorkspaceSessionTimer(
 ): Promise<PluginAction[] | void> {
   const payload = timerJobPayloadSchema.safeParse(job.payload);
   if (!payload.success) return;
-  if (!client.continueSessionV2) throw new Error('Workspace connector v2 session client is unavailable.');
+  if (!client.continueSessionV2) throw new Error('Integration Manager v2 session client is unavailable.');
   const session = await findWorkspaceMediaSession(context.dataStore, payload.data.actorIdentityId);
   if (
     !session || session.schemaVersion !== 2 || session.sessionId !== payload.data.sessionId
     || session.timer?.timerId !== payload.data.timerId
   ) return;
+  if (!(await workspaceScope(context, session.scopeId, session.actorIdentityId)).allowedCapabilities
+    .includes(workspaceSessionContinuationCapabilityId(session))) return;
   const firedAt = new Date().toISOString();
   const result = await client.continueSessionV2({
     protocolVersion: 2,

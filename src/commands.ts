@@ -1,10 +1,9 @@
 import { createHash } from 'node:crypto';
-import { publishCapabilityOptions } from './capabilityOptions';
+import { workspaceClaims, workspaceScope, type WorkspaceAccess } from './ownership';
+import type { StableIdentityAddressResolution } from '@wabs/plugin-sdk/identity';
 import type { CommandMetadata } from '@wabs/plugin-sdk/command-metadata';
-import type { CommandContext } from '@wabs/plugin-sdk/commands';
+import type { CommandContext, CommandResult } from '@wabs/plugin-sdk/commands';
 import {
-  WorkspaceConnectorCatalogSchema,
-  WorkspaceConnectorCatalogV2Schema,
   workspaceConnectorCatalogDigestPreimage,
   type WorkspaceConnectorActionV2,
   type WorkspaceConnectorCatalog,
@@ -16,7 +15,6 @@ import {
 import { requireStableIdentityAddress } from '@wabs/plugin-sdk/message-actor';
 import type { PluginAction } from '@wabs/plugin-sdk/actions';
 import type { PluginCommandContext } from './runtime';
-import { requireIntegrationCommandContext as requireOfficialCommandRuntime } from '@wabs/plugin-sdk/integration-plugin';
 import { requireScopeId } from '@wabs/plugin-sdk/commands';
 import { WorkspaceConnectorClient } from './client';
 import { parseWorkspaceConnectorConfig, workspaceConnectorConnection } from './config';
@@ -28,198 +26,82 @@ import { findWorkspaceMediaSession, rememberWorkspaceSession, rememberWorkspaceS
 import { deliverWorkspacePrivateChoice, markWorkspacePrivateChoiceCompleted,
   withWorkspacePrivateSessionLock, workspacePrivatePromptReceipt, WORKSPACE_PRIVATE_CHOICE_PURPOSE } from './privatePrompts';
 
-const CATALOG_CACHE_KEY = 'catalog:v1';
-const CATALOG_V2_CACHE_KEY = 'catalog:v2';
-const CATALOG_REFRESH_MS = 60_000;
-
-interface CatalogSet {
-  v1: WorkspaceConnectorCatalog;
-  v2?: WorkspaceConnectorCatalogV2 | undefined;
-}
+type InvocationHost = WorkspaceAccess & Pick<PluginCommandContext,
+  'config' | 'i18n' | 'dataStore' | 'flowEngine' | 'coveredGroupsForScope' | 'enqueuePluginJob'>;
+type Invocation = Pick<CommandContext, 'locale' | 't' | 'scopeId' | 'groupWid' | 'signal'> & {
+  actor: StableIdentityAddressResolution;
+  message: Pick<CommandContext['message'], 'context' | 'id' | 'chatId' | 'senderDisplayName'>;
+  args: string[];
+};
 
 export async function registerWorkspaceConnectorCommands(context: PluginCommandContext): Promise<void> {
-  const runtime = requireOfficialCommandRuntime(context);
-  context.router.register('workspace', 'status', workspaceCommand('none'), async (ctx) => {
-    const scopeId = requireScopeId(ctx);
-    const actorIdentityId = requireActor(ctx).identityId;
-    const scoped = parseWorkspaceConnectorConfig(await runtime.configFor(scopeId, actorIdentityId));
+  context.router.register('workspace', 'status', workspaceCommand('none'), async ctx => {
+    const scoped = parseWorkspaceConnectorConfig(await context.configFor!(requireScopeId(ctx)));
     const connection = workspaceConnectorConnection(context.config);
-    return {
-      handled: true,
-      text: ctx.t('official.workspace-connector.status', {
-        enabled: String(scoped.enabled),
-        configured: String(Boolean(connection)),
-        installation: connection?.installationId ?? ''
-      })
-    };
+    return { handled: true, text: ctx.t('official.integration-manager.status', {
+      enabled: String(scoped.enabled), configured: String(Boolean(connection)), installation: connection?.installationId ?? ''
+    }) };
   });
-
-  // The /workspace recovery namespace remains v1-compatible. Managed private
-  // scope selection is deliberately attached to remote v2 aliases themselves.
-  context.router.register('workspace', '*', workspaceCommand('durable'), async (ctx) => {
-    const actor = requireActor(ctx);
-    const connection = workspaceConnectorConnection(context.config);
-    if (!connection) {
-      return { handled: true, text: ctx.t('official.workspace-connector.unavailable') };
-    }
-    const privateInvocation = ctx.message.context === 'private';
-    const scopeId = privateInvocation ? `direct:${connection.installationId}` : requireScopeId(ctx);
-    const scoped = privateInvocation
-      ? { enabled: true, allowedCapabilities: [] as string[] }
-      : parseWorkspaceConnectorConfig(await runtime.configFor(scopeId, actor.identityId));
-    if (!scoped.enabled) {
-      return { handled: true, text: ctx.t('official.workspace-connector.disabled') };
-    }
-    const requestedAlias = ctx.command.subcommand?.trim().toLowerCase();
-    if (!requestedAlias) {
-      return { handled: true, text: ctx.t('official.workspace-connector.usage') };
-    }
-    try {
-      const client = new WorkspaceConnectorClient(connection);
-      const catalog = await client.catalog(ctx.signal);
-      const alias = catalog.aliases.find((candidate) =>
-        candidate.namespace === requestedAlias
-        && candidate.contexts.includes(privateInvocation ? 'private' : 'group')
-      );
-      if (!alias || (!privateInvocation && !scoped.allowedCapabilities.includes(alias.capabilityId))) {
-        return { handled: true, text: ctx.t('official.workspace-connector.unknownCapability') };
-      }
-      return await invokeWorkspaceAliasV1(context, runtime, ctx, catalog, alias, client);
-    } catch {
-      return { handled: true, text: ctx.t('official.workspace-connector.unavailable') };
-    }
-  });
-
-  const connection = workspaceConnectorConnection(context.config);
-  if (!connection || !context.dataStore) return;
-  const cachedV1 = WorkspaceConnectorCatalogSchema.safeParse(await context.dataStore.get(CATALOG_CACHE_KEY));
-  const cachedV2 = WorkspaceConnectorCatalogV2Schema.safeParse(await context.dataStore.get(CATALOG_V2_CACHE_KEY));
-  let installed: CatalogSet | undefined = cachedV1.success
-    ? { v1: cachedV1.data, ...(cachedV2.success ? { v2: cachedV2.data } : {}) }
-    : undefined;
-  if (installed) await installCatalogAliases(context, runtime, installed);
-
-  const refresh = async (): Promise<void> => {
-    try {
-      const client = new WorkspaceConnectorClient(connection);
-      const v1 = await client.catalog();
-      let v2 = installed?.v2;
-      let freshV2: WorkspaceConnectorCatalogV2 | undefined;
-      try {
-        const candidate = await client.catalogV2();
-        assertV2CatalogDigest(candidate);
-        v2 = candidate;
-        freshV2 = candidate;
-      } catch {
-        // v2 is additive. A deployment that has not exposed it yet retains the
-        // last validated v2 catalog while calendar v1 continues normally.
-      }
-      installed = { v1, ...(v2 ? { v2 } : {}) };
-      await installCatalogAliases(context, runtime, installed);
-      if (freshV2) await publishCapabilityOptions(context, connection, v1, freshV2);
-    } catch {
-      // A remote outage retains the last atomically installed catalogs and the
-      // /workspace recovery namespace.
-    }
+  const dispatch = async (ctx: CommandContext, command: string, owner?: string) => {
+    if (!ctx.actor || !context.configFor || !command) return { handled: true, text: ctx.t('official.integration-manager.usage') };
+    return dispatchWorkspaceCommand({ ...context, configFor: context.configFor }, {
+      ...ctx, scopeId: requireScopeId(ctx), actor: requireStableIdentityAddress(ctx.actor),
+      args: ctx.remainingArgs ?? ctx.command.args
+    }, command, owner);
   };
-  await refresh();
-  const timer = setInterval(() => void refresh(), CATALOG_REFRESH_MS);
-  timer.unref();
+  context.router.register('workspace', '*', workspaceCommand('durable'), ctx =>
+    dispatch(ctx, ctx.command.subcommand?.toLowerCase() ?? ''));
+  context.router.register('register', '*', { ...workspaceCommand('durable'),
+    help: { ...workspaceCommand('durable').help!, usage: '/register' } }, ctx =>
+    dispatch(ctx, 'register', WORKSPACE_CONNECTOR_PLUGIN_ID));
 }
 
-async function installCatalogAliases(
-  context: PluginCommandContext,
-  runtime: ReturnType<typeof requireOfficialCommandRuntime>,
-  catalogs: CatalogSet
-): Promise<void> {
-  const v2Aliases = catalogs.v2?.aliases ?? [];
-  const allNamespaces = [...catalogs.v1.aliases.map((alias) => alias.namespace), ...v2Aliases.map((alias) => alias.namespace)];
-  if (allNamespaces.includes('workspace')) {
-    throw new Error('The Workspace catalog cannot replace the /workspace recovery namespace.');
-  }
-  if (new Set(allNamespaces).size !== allNamespaces.length) {
-    throw new Error('Workspace catalog versions cannot publish the same command namespace.');
-  }
-  context.router.replaceNamespaceAliasesAtomically(WORKSPACE_CONNECTOR_PLUGIN_ID, [
-    ...catalogs.v1.aliases.map((alias) => ({
-      namespace: alias.namespace,
-      metadata: workspaceAliasCommandV1(alias),
-      handler: async (ctx: CommandContext) => invokeCurrentAliasV1(context, runtime, ctx, alias.namespace)
-    })),
-    ...v2Aliases.map((alias) => ({
-      namespace: alias.namespace,
-      metadata: workspaceAliasCommandV2(alias),
-      handler: async (ctx: CommandContext) => invokeCurrentAliasV2(context, runtime, ctx, alias.namespace)
-    }))
-  ]);
-  await Promise.all([
-    context.dataStore?.set(CATALOG_CACHE_KEY, catalogs.v1),
-    ...(catalogs.v2 ? [context.dataStore?.set(CATALOG_V2_CACHE_KEY, catalogs.v2)] : [])
-  ]);
-}
-
-async function invokeCurrentAliasV1(
-  context: PluginCommandContext,
-  runtime: ReturnType<typeof requireOfficialCommandRuntime>,
-  ctx: CommandContext,
-  namespace: string
-) {
+/** Both native app commands and /workspace resolve the same installed claim and fresh catalog. */
+export async function dispatchWorkspaceCommand(
+  context: InvocationHost, ctx: Invocation, command: string, caller?: string, requestedCapability?: string
+): Promise<CommandResult> {
+  const deny = () => ({ handled: true, text: ctx.t('official.integration-manager.unknownCapability') });
+  const claim = workspaceClaims(context).find(entry => entry.commands?.includes('/' + command));
+  if (!claim || (caller && claim.owner !== caller) || (requestedCapability && claim.capabilityId !== requestedCapability)) return deny();
   const connection = workspaceConnectorConnection(context.config);
-  if (!connection) return { handled: true, text: ctx.t('official.workspace-connector.unavailable') };
+  if (!connection) return { handled: true, text: ctx.t('official.integration-manager.unavailable') };
+  const client = new WorkspaceConnectorClient(connection);
   try {
-    const client = new WorkspaceConnectorClient(connection);
-    const catalog = await client.catalog(ctx.signal);
-    const alias = catalog.aliases.find((candidate) => candidate.namespace === namespace);
-    return alias
-      ? await invokeWorkspaceAliasV1(context, runtime, ctx, catalog, alias, client)
-      : { handled: true, text: ctx.t('official.workspace-connector.unknownCapability') };
+    const scope = await workspaceScope(context, requireScopeId(ctx), ctx.actor.identityId);
+    if (!scope.allowedCapabilities.includes(claim.capabilityId)) return deny();
+    const v2 = await client.catalogV2(ctx.signal).catch(() => undefined);
+    if (v2) {
+      assertV2CatalogDigest(v2);
+      const alias = v2.aliases.find(item => item.namespace === command);
+      if (alias) return alias.capabilityId === claim.capabilityId
+        ? await invokeWorkspaceAliasV2(context, ctx, v2, alias, client) : deny();
+    }
+    const v1 = await client.catalog(ctx.signal);
+    const alias = v1.aliases.find(item => item.namespace === command && item.capabilityId === claim.capabilityId);
+    return alias ? await invokeWorkspaceAliasV1(context, ctx, v1, alias, client) : deny();
   } catch {
-    return { handled: true, text: ctx.t('official.workspace-connector.unavailable') };
-  }
-}
-
-async function invokeCurrentAliasV2(
-  context: PluginCommandContext,
-  runtime: ReturnType<typeof requireOfficialCommandRuntime>,
-  ctx: CommandContext,
-  namespace: string
-) {
-  const connection = workspaceConnectorConnection(context.config);
-  if (!connection) return { handled: true, text: ctx.t('official.workspace-connector.unavailable') };
-  try {
-    const client = new WorkspaceConnectorClient(connection);
-    const catalog = await client.catalogV2(ctx.signal);
-    assertV2CatalogDigest(catalog);
-    const alias = catalog.aliases.find((candidate) => candidate.namespace === namespace);
-    return alias
-      ? await invokeWorkspaceAliasV2(context, runtime, ctx, catalog, alias, client)
-      : { handled: true, text: ctx.t('official.workspace-connector.unknownCapability') };
-  } catch {
-    return { handled: true, text: ctx.t('official.workspace-connector.unavailable') };
+    return { handled: true, text: ctx.t('official.integration-manager.unavailable') };
   }
 }
 
 async function invokeWorkspaceAliasV1(
-  context: PluginCommandContext,
-  runtime: ReturnType<typeof requireOfficialCommandRuntime>,
-  ctx: CommandContext,
+  context: InvocationHost,
+  ctx: Invocation,
   catalog: WorkspaceConnectorCatalog,
   alias: WorkspaceConnectorCommandAlias,
   client: WorkspaceConnectorClient
 ) {
-  const actor = requireActor(ctx);
+  const actor = ctx.actor;
   const connection = workspaceConnectorConnection(context.config);
-  if (!connection) return { handled: true, text: ctx.t('official.workspace-connector.unavailable') };
+  if (!connection) return { handled: true, text: ctx.t('official.integration-manager.unavailable') };
   const privateInvocation = ctx.message.context === 'private';
   if (!alias.contexts.includes(privateInvocation ? 'private' : 'group')) {
-    return { handled: true, text: ctx.t('official.workspace-connector.unknownCapability') };
+    return { handled: true, text: ctx.t('official.integration-manager.unknownCapability') };
   }
   const scopeId = privateInvocation ? `direct:${connection.installationId}` : requireScopeId(ctx);
-  const scoped = privateInvocation
-    ? { enabled: true, allowedCapabilities: [] as string[] }
-    : parseWorkspaceConnectorConfig(await runtime.configFor(scopeId, actor.identityId));
-  if (!scoped.enabled || (!privateInvocation && !scoped.allowedCapabilities.includes(alias.capabilityId))) {
-    return { handled: true, text: ctx.t('official.workspace-connector.disabled') };
+  const scoped = await workspaceScope(context, requireScopeId(ctx), actor.identityId);
+  if (!scoped.allowedCapabilities.includes(alias.capabilityId)) {
+    return { handled: true, text: ctx.t('official.integration-manager.disabled') };
   }
   const workspaceActor = connectorActor(ctx);
   const surface = privateInvocation ? 'private' as const : 'group' as const;
@@ -237,7 +119,7 @@ async function invokeWorkspaceAliasV1(
     messageId: ctx.message.id,
     idempotencyKey: `whatsapp:${ctx.message.id}:${alias.capabilityId}`,
     actor: workspaceActor,
-    arguments: ctx.remainingArgs ?? ctx.command.args
+    arguments: ctx.args
   }, ctx.signal);
   if (result.sessionId && context.dataStore) {
     await rememberWorkspaceSession({
@@ -259,40 +141,38 @@ async function invokeWorkspaceAliasV1(
 }
 
 async function invokeWorkspaceAliasV2(
-  context: PluginCommandContext,
-  runtime: ReturnType<typeof requireOfficialCommandRuntime>,
-  ctx: CommandContext,
+  context: InvocationHost,
+  ctx: Invocation,
   catalog: WorkspaceConnectorCatalogV2,
   alias: WorkspaceConnectorCommandAliasV2,
   client: WorkspaceConnectorClient
 ) {
-  return withWorkspacePrivateSessionLock(context, requireActor(ctx).identityId,
-    () => invokeWorkspaceAliasV2Locked(context, runtime, ctx, catalog, alias, client));
+  return withWorkspacePrivateSessionLock(context, ctx.actor.identityId,
+    () => invokeWorkspaceAliasV2Locked(context, ctx, catalog, alias, client));
 }
 
 async function invokeWorkspaceAliasV2Locked(
-  context: PluginCommandContext,
-  runtime: ReturnType<typeof requireOfficialCommandRuntime>,
-  ctx: CommandContext,
+  context: InvocationHost,
+  ctx: Invocation,
   catalog: WorkspaceConnectorCatalogV2,
   alias: WorkspaceConnectorCommandAliasV2,
   client: WorkspaceConnectorClient
 ) {
-  const actor = requireActor(ctx);
+  const actor = ctx.actor;
   const connection = workspaceConnectorConnection(context.config);
-  if (!connection) return { handled: true, text: ctx.t('official.workspace-connector.unavailable') };
+  if (!connection) return { handled: true, text: ctx.t('official.integration-manager.unavailable') };
   const privateInvocation = ctx.message.context === 'private';
   if (!alias.contexts.includes(privateInvocation ? 'private' : 'group')) {
-    return { handled: true, text: ctx.t('official.workspace-connector.unknownCapability') };
+    return { handled: true, text: ctx.t('official.integration-manager.unknownCapability') };
   }
   const scopeId = requireScopeId(ctx);
-  const scoped = parseWorkspaceConnectorConfig(await runtime.configFor(scopeId, actor.identityId));
+  const scoped = await workspaceScope(context, scopeId, actor.identityId);
   if (!scoped.enabled || !scoped.allowedCapabilities.includes(alias.capabilityId)) {
-    return { handled: true, text: ctx.t('official.workspace-connector.disabled') };
+    return { handled: true, text: ctx.t('official.integration-manager.disabled') };
   }
   const groupWid = ctx.groupWid?.trim() || (privateInvocation ? '' : ctx.message.chatId);
   if (!groupWid.endsWith('@g.us')) {
-    return { handled: true, text: ctx.t('official.workspace-connector.scopeUnavailable') };
+    return { handled: true, text: ctx.t('official.integration-manager.scopeUnavailable') };
   }
   const origin = {
     chatId: ctx.message.chatId,
@@ -328,7 +208,7 @@ async function invokeWorkspaceAliasV2Locked(
     messageId: ctx.message.id,
     idempotencyKey: `whatsapp-v2:${ctx.message.id}:${alias.capabilityId}`,
     actor: workspaceActor,
-    arguments: ctx.remainingArgs ?? ctx.command.args
+    arguments: ctx.args
   }, ctx.signal);
   const route = {
     originChatId: origin.chatId,
@@ -395,7 +275,7 @@ async function invokeWorkspaceAliasV2Locked(
       }
     }
     if (session?.timer) {
-      await scheduleWorkspaceSessionTimer(runtime, { ...session, timer: session.timer });
+      await scheduleWorkspaceSessionTimer(context, { ...session, timer: session.timer });
     }
   }
   const pluginActions = await workspaceActionsToPluginActionsV2(context,
@@ -407,18 +287,13 @@ async function invokeWorkspaceAliasV2Locked(
   };
 }
 
-function connectorActor(ctx: CommandContext) {
-  const actor = requireActor(ctx);
+function connectorActor(ctx: Invocation) {
+  const actor = ctx.actor;
   return {
     identityId: actor.identityId,
     ...(actor.phoneNumber ? { verifiedWhatsappNumber: canonicalPhone(actor.phoneNumber) } : {}),
     ...(ctx.message.senderDisplayName ? { displayName: ctx.message.senderDisplayName } : {})
   };
-}
-
-function requireActor(ctx: CommandContext) {
-  if (!ctx.actor) throw new Error('Workspace requests require an authoritative actor identity.');
-  return requireStableIdentityAddress(ctx.actor);
 }
 
 function canonicalPhone(phoneNumber: string): string {
@@ -525,9 +400,10 @@ export async function resolveWorkspaceActionRouteV2(
 }
 
 async function scheduleWorkspaceSessionTimer(
-  runtime: ReturnType<typeof requireOfficialCommandRuntime>,
+  runtime: Pick<InvocationHost, 'enqueuePluginJob'>,
   session: { sessionId: string; scopeId: string; groupWid: string; actorIdentityId: string; timer: { timerId: string; fireAt: string } }
 ): Promise<void> {
+  if (!runtime.enqueuePluginJob) throw new Error('Workspace job queue is unavailable.');
   await runtime.enqueuePluginJob({
     jobName: WORKSPACE_CONNECTOR_SESSION_TIMER_JOB,
     scopeId: session.scopeId,
@@ -545,7 +421,7 @@ async function scheduleWorkspaceSessionTimer(
 export function assertV2CatalogDigest(catalog: WorkspaceConnectorCatalogV2): void {
   const digest = createHash('sha256').update(workspaceConnectorCatalogDigestPreimage(catalog)).digest('hex');
   if (digest !== catalog.digestSha256) {
-    throw new Error('Workspace connector v2 catalog digest did not match its canonical content.');
+    throw new Error('Integration Manager v2 catalog digest did not match its canonical content.');
   }
 }
 
@@ -555,7 +431,10 @@ function workspaceCommand(mutation: CommandMetadata['mutation']): CommandMetadat
     interaction: mutation === 'none' ? 'group_same_chat' : 'either_same_chat',
     pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID,
     ...(mutation === 'none' ? { requiredAccessPlane: 'group_member' as const } : {}),
-    ...(mutation === 'durable' ? { privateScopeAuthorization: 'handler' as const } : {}),
+    ...(mutation === 'durable' ? {
+      requiresCurrentManagedGroupMembership: true, currentManagedGroupMembershipMode: 'effective_scope' as const,
+      privateManagedTarget: { mode: 'infer_group_or_community' as const, collapseCommunities: true }
+    } : {}),
     requiresManagedGroup: true,
     ...(mutation === 'none'
       ? { targets: [{ kind: 'scope' as const, flag: ['scope', 'scope-id'], fallback: 'current_scope' as const }] }
@@ -563,14 +442,14 @@ function workspaceCommand(mutation: CommandMetadata['mutation']): CommandMetadat
     mutation,
     auditAction: mutation === 'none' ? 'workspace-connector.status' : 'workspace-connector.invoke',
     help: {
-      familyKey: 'official.workspace-connector.help.family',
+      familyKey: 'official.integration-manager.help.family',
       featureId: 'workspace-connector',
       topicId: mutation === 'none' ? 'workspace-status' : 'workspace-invoke',
-      descriptionKey: 'official.workspace-connector.help.command',
+      descriptionKey: 'official.integration-manager.help.command',
       usage: mutation === 'none' ? '/workspace status' : '/workspace {capability} [...arguments]',
       exampleKeys: [mutation === 'none'
-        ? 'official.workspace-connector.help.status.example'
-        : 'official.workspace-connector.help.invoke.example']
+        ? 'official.integration-manager.help.status.example'
+        : 'official.integration-manager.help.invoke.example']
     },
     assistant: {
       executable: true,
@@ -580,50 +459,3 @@ function workspaceCommand(mutation: CommandMetadata['mutation']): CommandMetadat
   };
 }
 
-function workspaceAliasCommandV1(alias: WorkspaceConnectorCommandAlias): CommandMetadata {
-  return {
-    ...workspaceCommand('durable'),
-    help: {
-      familyKey: 'official.workspace-connector.help.family',
-      featureId: 'workspace-connector',
-      descriptionKey: 'official.workspace-connector.help.command',
-      usage: `/${alias.namespace} [...arguments]`
-    }
-  };
-}
-
-function workspaceAliasCommandV2(alias: WorkspaceConnectorCommandAliasV2): CommandMetadata {
-  const supportsPrivate = alias.contexts.includes('private');
-  return {
-    plane: 'group_operation',
-    interaction: supportsPrivate ? 'either_same_chat' : 'group_same_chat',
-    pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID,
-    requiresManagedGroup: true,
-    requiresCurrentManagedGroupMembership: true,
-    currentManagedGroupMembershipMode: 'effective_scope',
-    ...(supportsPrivate ? {
-      privateManagedTarget: {
-        mode: 'infer_group_or_community' as const,
-        collapseCommunities: true
-      }
-    } : {}),
-    mutation: 'durable',
-    auditAction: 'workspace-connector.invoke',
-    help: {
-      familyKey: 'official.workspace-connector.help.family',
-      featureId: 'workspace-connector',
-      descriptionKey: 'official.workspace-connector.help.command',
-      usage: localizedCatalogValue(alias.usageByLocale),
-      keywords: [alias.namespace]
-    },
-    assistant: {
-      executable: true,
-      requiresConfirmation: true,
-      intentTags: [alias.namespace]
-    }
-  };
-}
-
-function localizedCatalogValue(values: Record<string, string>): string {
-  return values.en ?? values['pt-PT'] ?? Object.values(values)[0] ?? '';
-}

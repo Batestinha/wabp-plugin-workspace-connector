@@ -37,7 +37,7 @@ export function registerWorkspaceConnectorCancellations(
         return {
           workflowId: 'workspace-remote-session',
           cancelled: false,
-          text: t('official.workspace-connector.cancelFailed'),
+          text: t('official.integration-manager.cancelFailed'),
           reason: 'connection-unavailable'
         };
       }
@@ -66,7 +66,7 @@ export function registerWorkspaceConnectorCancellations(
           return {
             workflowId: 'workspace-remote-session',
             cancelled: false,
-            text: t('official.workspace-connector.cancelFailed'),
+            text: t('official.integration-manager.cancelFailed'),
             reason: 'remote-session-remained-active'
           };
         }
@@ -92,13 +92,13 @@ export function registerWorkspaceConnectorCancellations(
         return {
           workflowId: 'workspace-remote-session',
           cancelled: true,
-          text: renderWorkspaceActions(result.actions) || t('official.workspace-connector.cancelled')
+          text: renderWorkspaceActions(result.actions) || t('official.integration-manager.cancelled')
         };
       } catch {
         return {
           workflowId: 'workspace-remote-session',
           cancelled: false,
-          text: t('official.workspace-connector.cancelFailed'),
+          text: t('official.integration-manager.cancelFailed'),
           reason: 'remote-cancellation-failed'
         };
       }

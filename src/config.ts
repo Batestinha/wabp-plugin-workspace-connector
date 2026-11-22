@@ -10,9 +10,7 @@ export const workspaceConnectorConfigSchema = z.object({
     z.literal(''),
     z.string().trim().min(1).max(512).regex(/^[A-Za-z0-9][A-Za-z0-9._:@\/-]*$/)
   ]).default(''),
-  allowedCapabilities: z.array(
-    z.string().trim().min(1).max(160).regex(/^[a-z0-9][a-z0-9._:-]*$/)
-  ).max(128).default([])
+  websiteAccountAccess: z.boolean().default(false)
 }).strip();
 
 export type WorkspaceConnectorConfig = z.infer<typeof workspaceConnectorConfigSchema>;
@@ -52,7 +50,7 @@ function canonicalHttpsBaseUrl(input: string | undefined): string {
     parsed.protocol !== 'https:' || parsed.username || parsed.password ||
     parsed.search || parsed.hash || (parsed.pathname !== '/' && parsed.pathname.endsWith('/'))
   ) {
-    throw new Error('Workspace connector base URL must be a canonical HTTPS URL without credentials, query, or fragment.');
+    throw new Error('Integration Manager base URL must be a canonical HTTPS URL without credentials, query, or fragment.');
   }
   return value.endsWith('/') ? value.slice(0, -1) : value;
 }

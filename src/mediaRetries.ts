@@ -10,6 +10,7 @@ import type { PluginDataStore } from '@wabs/plugin-sdk/data-store';
 const RETRY_PREFIX = 'media-retry:v1:';
 
 const mediaRetryV1Schema = z.object({
+  scopeId: z.string().min(1).max(512).optional(),
   schemaVersion: z.literal(1),
   sessionId: z.string().min(1).max(512),
   capabilityId: z.string().min(1).max(160),
@@ -23,6 +24,7 @@ const mediaRetryV1Schema = z.object({
 }).strict();
 
 const mediaRetryV2Schema = z.object({
+  scopeId: z.string().min(1).max(512).optional(),
   schemaVersion: z.literal(2),
   sessionId: z.string().min(1).max(512),
   capabilityId: z.string().min(1).max(160),
@@ -40,6 +42,7 @@ const mediaRetrySchema = z.discriminatedUnion('schemaVersion', [mediaRetryV1Sche
 export type WorkspaceMediaRetry = z.infer<typeof mediaRetrySchema>;
 
 export function newWorkspaceMediaRetry(input: {
+  scopeId?: string;
   sessionId: string;
   capabilityId: string;
   fileId: string;
@@ -57,6 +60,7 @@ export function newWorkspaceMediaRetry(input: {
 }
 
 export function newWorkspaceMediaRetryV2(input: {
+  scopeId?: string;
   sessionId: string;
   capabilityId: string;
   fileId: string;
