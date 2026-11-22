@@ -13,7 +13,7 @@ function fixture(t, { capabilityId = 'fixture.confirm.v1', locale = 'en' } = {})
   const locks = new Map(), promptDeliveries = new Map(), closedPrompts = new Set();
   let handler, handlerOptions;
   const messages = locale === 'pt-PT'
-    ? require('../locales/pt-PT/official.workspace-connector.json') : plugin.manifest.defaultMessages;
+    ? require('../locales/pt-PT/official.integration-manager.json') : plugin.manifest.defaultMessages;
   const address = { identityId: 'person-1', deliveryChatId: 'person@lid', mentionWid: 'person@lid', phoneNumber: '351910000001' };
   const catalog = { protocolVersion: 2, workspaceId: 'workspace-1', workspaceLabel: 'Workspace', revision: 1,
     aliases: [], capabilities: [{ capabilityId, interfaces: ['interactive'], maximumPayloadBytes: 65536, mediaMimeTypes: [], cancellationSupported: true }] };
@@ -25,7 +25,7 @@ function fixture(t, { capabilityId = 'fixture.confirm.v1', locale = 'en' } = {})
       workspaceConnectorOidcClientSecret: 'fixture-secret-for-tests' },
     dataStore: { get: async key => structuredClone(rows.get(key)), set: async (key, value) => rows.set(key, structuredClone(value)),
       delete: async key => Number(rows.delete(key)), list: async () => [...rows].map(([key, valueJson]) => ({ id: key, scopeId: null, key, valueJson })) },
-    configFor: async () => ({ enabled: true, allowedCapabilities: [capabilityId] }),
+    configFor: async () => ({ enabled: true, websiteAccountAccess: true }),
     coveredGroupsForScope: async () => [{ groupWid: 'group@g.us' }],
     currentMemberIdentityIdsForScope: async () => [address.identityId],
     resolveStableIdentityById: async () => address,
@@ -55,6 +55,14 @@ function fixture(t, { capabilityId = 'fixture.confirm.v1', locale = 'en' } = {})
       acknowledgePromptLock: async id => { acknowledgements.push(id); closedPrompts.add(id); return locks.delete(id); },
       cancelPromptBySubject: async () => 1,
     } };
+  const owner = capabilityId.startsWith('account.') ? plugin.manifest.pluginId :
+    capabilityId === 'gallery.media.upload.v1' ? 'official.piwigo-gallery' : 'fixture.confirm';
+  context.catalog = {
+    listManifests: () => [{ pluginId: owner, workspaceCapabilities: [{ capabilityId,
+      commands: capabilityId === 'gallery.media.upload.v1' ? ['/gallery'] : [],
+      ...(owner === plugin.manifest.pluginId ? { enabledSetting: 'websiteAccountAccess' } : {}) }] }],
+    enabledFor: async () => true, configFor: async () => ({})
+  };
   const client = { catalogV2: async () => catalog };
   t.mock.method(WorkspaceConnectorClient.prototype, 'continueSessionV2', async input => {
     callbacks.push(input);
@@ -62,7 +70,7 @@ function fixture(t, { capabilityId = 'fixture.confirm.v1', locale = 'en' } = {})
   });
   let hooks = createWorkspaceConnectorHooks(context);
   t.after(() => hooks.onShutdown());
-  const delivery = { protocolVersion: 2, deliveryId: 'delivery-1', idempotencyKey: 'delivery-once',
+  const delivery = { protocolVersion: 2, origin: { scopeId: 'scope-1', capabilityId }, deliveryId: 'delivery-1', idempotencyKey: 'delivery-once',
     target: { kind: 'identity', identityId: address.identityId }, expiresAt: '2099-01-01T00:00:00.000Z',
     action: { kind: 'start_session', capabilityId, scopeId: 'scope-1',
       session: { sessionId: 'remote-session-1', expiresAt: '2099-01-01T00:00:00.000Z' },
@@ -209,7 +217,7 @@ test('a WhatsApp backend retry skips the already acknowledged receipt after rest
   assert.ok(f.locks.has(lock.flowPromptId));
   assert.deepEqual(f.acknowledgements, []);
   await f.restart();
-  f.context.i18n.translatorForIdentity = async () => key => require('../locales/pt-PT/official.workspace-connector.json')[key];
+  f.context.i18n.translatorForIdentity = async () => key => require('../locales/pt-PT/official.integration-manager.json')[key];
   await f.handle(lock);
   assert.equal(f.sends.length, 2);
   assert.equal(f.sends[1][1], 'Confirmed.');
@@ -255,7 +263,7 @@ for (const outcome of ['received', 'cannot-continue']) {
     assert.ok(f.locks.has(lock.flowPromptId));
     assert.ok(await findWorkspaceMediaSession(f.context.dataStore, 'person-1'));
     f.context.dataStore.set = persist;
-    f.context.i18n.translatorForIdentity = async () => key => require('../locales/pt-PT/official.workspace-connector.json')[key];
+    f.context.i18n.translatorForIdentity = async () => key => require('../locales/pt-PT/official.integration-manager.json')[key];
     await f.handle(lock);
     assert.deepEqual(f.sends[1], f.sends[0]);
     assert.equal(f.sends[0][2].idempotencyKey, `workspace-choice-v2:prompt-1:${outcome}`);
@@ -315,8 +323,8 @@ for (const change of ['scope', 'capability', 'disabled']) {
     const f = fixture(t, { capabilityId: 'account.whatsapp-link.v1', locale: 'pt-PT' });
     await f.start();
     if (change === 'scope') f.context.currentMemberIdentityIdsForScope = async () => [];
-    if (change === 'capability') f.context.configFor = async () => ({ enabled: true, allowedCapabilities: [] });
-    if (change === 'disabled') f.context.configFor = async () => ({ enabled: false, allowedCapabilities: ['account.whatsapp-link.v1'] });
+    if (change === 'capability') f.context.configFor = async () => ({ enabled: true, websiteAccountAccess: false });
+    if (change === 'disabled') f.context.configFor = async () => ({ enabled: false, websiteAccountAccess: true });
     const send = f.context.sendText;
     const lock = f.lock();
     f.context.sendText = async () => { throw new Error('policy acknowledgement unavailable'); };
@@ -335,7 +343,7 @@ for (const change of ['scope', 'capability', 'disabled']) {
     assert.equal(await findWorkspaceMediaSession(f.context.dataStore, 'person-1'), undefined);
     assert.equal((await f.context.dataStore.get(lock.subjectId)).completed, true);
     f.context.currentMemberIdentityIdsForScope = async () => ['person-1'];
-    f.context.configFor = async () => ({ enabled: true, allowedCapabilities: ['account.whatsapp-link.v1'] });
+    f.context.configFor = async () => ({ enabled: true, websiteAccountAccess: true });
     f.delivery.action.session.sessionId = 'new-link-session';
     f.delivery.idempotencyKey = 'new-link-delivery';
     assert.equal((await f.start()).disposition, 'delivered');
@@ -628,14 +636,10 @@ async function galleryCommand(t, f) {
   t.mock.method(WorkspaceConnectorClient.prototype, 'invokeV2', async input => ({ protocolVersion: 2,
     invocationId: input.messageId, session: { sessionId: 'gallery-session', expiresAt: '2099-01-01T00:00:00.000Z' },
     actions: [{ kind: 'choice', route: { kind: 'origin' }, prompt: 'Choose an album', choices: [{ id: 'event-1', label: 'Test Event' }] }] }));
-  let command;
-  f.context.router = { register() {}, replaceNamespaceAliasesAtomically: (_id, aliases) => { command = aliases.find(a => a.namespace === 'gallery').handler; } };
-  f.context.enqueuePluginJob = async () => {};
-  await plugin.registerCommands(f.context);
-  assert.equal(typeof command, 'function');
-  return (messageId = 'gallery-command') => command({ scopeId: 'scope-1', groupWid: 'group@g.us', locale: 'pt-PT',
-    actor: { identityAddress: f.address }, message: { id: messageId, context: 'private', chatId: f.address.deliveryChatId, body: '/gallery' },
-    command: { namespace: 'gallery', args: [] }, t: key => key });
+  const service = plugin.registerServices(f.context).find(service => service.serviceId === 'official.integration-manager.capability.v1');
+  return (messageId = 'gallery-command') => service.methods[0].handler({
+    capabilityId, command: 'gallery', messageId, chatId: f.address.deliveryChatId, surface: 'private', args: []
+  }, { callerPluginId: 'official.piwigo-gallery', scopeId: 'scope-1', groupWid: 'group@g.us', actorIdentityId: f.address.identityId });
 }
 
 test('/gallery owns its first private menu and consumes the first answer exactly once', async t => {

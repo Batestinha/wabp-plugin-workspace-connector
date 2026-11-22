@@ -4,10 +4,10 @@ import { WORKSPACE_CONNECTOR_PLUGIN_ID } from './manifest';
 
 export const workspaceConnectorControls: ControlDescriptor[] = [
   ...([
-    ['otpCodeSeparate', 'Send sign-in codes separately', 'Send only the code first, then quote-reply to it with the explanation. These settings apply to private sign-in, registration, and password recovery for this account. Use the Global scope when present; otherwise, enabled Workspace Connector scopes must use matching settings.', true],
-    ['otpLoginExplanation', 'Sign-in code explanation', 'Optional explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Workspace Connector scopes.', false],
-    ['otpRegistrationExplanation', 'Registration code explanation', 'Optional registration explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Workspace Connector scopes.', false],
-    ['otpRecoveryExplanation', 'Password-recovery code explanation', 'Optional recovery explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Workspace Connector scopes.', false]
+    ['otpCodeSeparate', 'Send sign-in codes separately', 'Send only the code first, then quote-reply to it with the explanation. These settings apply to private sign-in, registration, and password recovery for this account. Use the Global scope when present; otherwise, enabled Integration Manager scopes must use matching settings.', true],
+    ['otpLoginExplanation', 'Sign-in code explanation', 'Optional explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Integration Manager scopes.', false],
+    ['otpRegistrationExplanation', 'Registration code explanation', 'Optional registration explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Integration Manager scopes.', false],
+    ['otpRecoveryExplanation', 'Password-recovery code explanation', 'Optional recovery explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Integration Manager scopes.', false]
   ] as const).map(([path, label, description, toggle], index) => defineControl({
     id: `plugin.${WORKSPACE_CONNECTOR_PLUGIN_ID}.${path}`, label, description,
     plane: 'plugin-scope-config', domain: 'official-plugin-settings', section: 'Sign-in codes', order: 40 + index,
@@ -21,16 +21,16 @@ export const workspaceConnectorControls: ControlDescriptor[] = [
   defineControl({
     id: `plugin.${WORKSPACE_CONNECTOR_PLUGIN_ID}.enabled`,
     label: 'Enabled',
-    description: 'Enable the Workspace connector for this managed scope.',
+    description: 'Enable the Integration Manager for this managed scope.',
     plane: 'plugin-scope-config',
     domain: 'official-plugin-settings',
-    section: 'Workspace connector',
+    section: 'Integration Manager',
     order: 10,
     visibility: 'bot_admin',
     configurable: true,
     storage: { kind: 'plugin-scope-config', pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID, path: 'enabled' },
     schema: { type: 'boolean' },
-    ui: { widget: 'toggle', helpText: 'Enable the Workspace connector for this managed scope.' },
+    ui: { widget: 'toggle', helpText: 'Enable the Integration Manager for this managed scope.' },
     restartRequirement: 'NO_RESTART',
     dangerous: false,
     sensitivity: { sensitive: false, redact: 'none' },
@@ -39,24 +39,23 @@ export const workspaceConnectorControls: ControlDescriptor[] = [
     relatedActionIds: []
   }),
   defineControl({
-    id: `plugin.${WORKSPACE_CONNECTOR_PLUGIN_ID}.allowedCapabilities`,
-    label: 'Allowed capabilities',
-    description: 'Select the Workspace capabilities this scope may invoke or publish.',
+    id: `plugin.${WORKSPACE_CONNECTOR_PLUGIN_ID}.websiteAccountAccess`,
+    label: 'Website account access',
+    description: 'Allow website registration, account linking and WhatsApp verification codes for this scope.',
     plane: 'plugin-scope-config',
     domain: 'official-plugin-settings',
-    section: 'Workspace connector',
+    section: 'Integration Manager',
     order: 20,
     visibility: 'bot_admin',
     configurable: true,
-    storage: { kind: 'plugin-scope-config', pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID, path: 'allowedCapabilities' },
-    schema: { type: 'array', max: 128, items: { type: 'string', min: 1, max: 160 } },
-    ui: { widget: 'entity-picker', dynamicOptions: { source: 'workspace-capabilities' },
-      helpText: 'Select permissions from the connected Workspace catalog. Search by description or identifier. Existing selections are preserved if the catalog is unavailable.' },
+    storage: { kind: 'plugin-scope-config', pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID, path: 'websiteAccountAccess' },
+    schema: { type: 'boolean' },
+    ui: { widget: 'toggle', helpText: 'Allow website registration, account linking and WhatsApp verification codes for this scope.' },
     restartRequirement: 'NO_RESTART',
     dangerous: false,
     sensitivity: { sensitive: false, redact: 'none' },
     auditAction: 'operator_console.plugin_config.update',
-    relatedCommandIds: ['/workspace *'],
+    relatedCommandIds: ['/workspace status'],
     relatedActionIds: []
   }),
   defineControl({
@@ -65,7 +64,7 @@ export const workspaceConnectorControls: ControlDescriptor[] = [
     description: 'Exact WhatsApp chat ID for Workspace deliveries addressed to this configured scope.',
     plane: 'plugin-scope-config',
     domain: 'official-plugin-settings',
-    section: 'Workspace connector',
+    section: 'Integration Manager',
     order: 30,
     visibility: 'bot_admin',
     configurable: true,

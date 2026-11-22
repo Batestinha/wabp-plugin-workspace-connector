@@ -1,26 +1,27 @@
 {
   "schemaVersion": 2,
-  "pluginId": "official.workspace-connector",
-  "name": "Workspace Connector",
+  "pluginId": "official.integration-manager",
+  "name": "Integration Manager",
   "author": {
     "name": "Batestinha",
     "url": "https://github.com/Batestinha"
   },
-  "description": "Connect managed WhatsApp scopes to capabilities declared by an external Workspace authority.",
+  "description": "Connect WhatsApp applications and website accounts to the Workspace.",
   "kind": "managed_group",
-  "version": "0.8.12",
-  "coreApiRange": "^0.3.9",
+  "version": "1.0.0",
+  "coreApiRange": "^0.3.28",
   "entrypoint": "dist/index.js",
-  "messageNamespace": "official.workspace-connector",
-  "descriptionKey": "official.workspace-connector.description",
+  "messageNamespace": "official.integration-manager",
+  "descriptionKey": "official.integration-manager.description",
   "commands": [
     "/workspace",
-    "/workspace status"
+    "/workspace status",
+    "/register"
   ],
   "help": {
     "featureId": "workspace-connector",
-    "titleKey": "official.workspace-connector.help.feature.title",
-    "summaryKey": "official.workspace-connector.help.feature.summary",
+    "titleKey": "official.integration-manager.help.feature.title",
+    "summaryKey": "official.integration-manager.help.feature.summary",
     "order": 110,
     "aliases": [
       "workspace",
@@ -29,18 +30,18 @@
     "topics": [
       {
         "topicId": "workspace-status",
-        "titleKey": "official.workspace-connector.help.status.title",
-        "summaryKey": "official.workspace-connector.help.status.summary",
+        "titleKey": "official.integration-manager.help.status.title",
+        "summaryKey": "official.integration-manager.help.status.summary",
         "order": 10,
         "commands": [
           "/workspace",
           "/workspace status"
         ],
         "instructionKeys": [
-          "official.workspace-connector.help.status.instruction"
+          "official.integration-manager.help.status.instruction"
         ],
         "exampleKeys": [
-          "official.workspace-connector.help.status.example"
+          "official.integration-manager.help.status.example"
         ],
         "keywords": [
           "workspace",
@@ -54,17 +55,18 @@
       },
       {
         "topicId": "workspace-invoke",
-        "titleKey": "official.workspace-connector.help.invoke.title",
-        "summaryKey": "official.workspace-connector.help.invoke.summary",
+        "titleKey": "official.integration-manager.help.invoke.title",
+        "summaryKey": "official.integration-manager.help.invoke.summary",
         "order": 20,
         "commands": [
-          "/workspace"
+          "/workspace",
+          "/register"
         ],
         "instructionKeys": [
-          "official.workspace-connector.help.invoke.instruction"
+          "official.integration-manager.help.invoke.instruction"
         ],
         "exampleKeys": [
-          "official.workspace-connector.help.invoke.example"
+          "official.integration-manager.help.invoke.example"
         ],
         "keywords": [
           "workspace",
@@ -85,6 +87,27 @@
     "plugin.job"
   ],
   "services": [
+    {
+      "serviceId": "official.integration-manager.capability.v1",
+      "methods": [
+        {
+          "name": "invoke",
+          "access": "mutation",
+          "timeoutMs": 30000
+        }
+      ]
+    },
+    {
+      "serviceId": "official.integration-manager.projection.v1",
+      "description": "Publish an idempotent, generation-fenced projection to the configured Workspace.",
+      "methods": [
+        {
+          "name": "replace",
+          "access": "mutation",
+          "timeoutMs": 30000
+        }
+      ]
+    },
     {
       "serviceId": "official.workspace-connector.projection.v1",
       "description": "Publish an idempotent, generation-fenced projection to the configured Workspace.",
@@ -135,7 +158,7 @@
   "assistant": {
     "summary": "Application-neutral Workspace capability discovery, invocation, projection publication, outbound delivery, and bounded media handoff.",
     "useCases": [
-      "Inspect whether the Workspace connector is configured for a managed scope.",
+      "Inspect whether the Integration Manager is configured for a managed scope.",
       "Invoke a Workspace-published capability through its current command alias.",
       "Publish generation-fenced projections and deliver generic Workspace replies without embedding application business rules."
     ],
@@ -156,20 +179,20 @@
   },
   "operatorConsole": {
     "configPaths": [
-      "enabled",
-      "allowedCapabilities",
-      "deliveryChatId",
       "otpCodeSeparate",
       "otpLoginExplanation",
       "otpRecoveryExplanation",
+      "enabled",
+      "websiteAccountAccess",
+      "deliveryChatId",
       "otpRegistrationExplanation"
     ],
     "controls": [
       {
         "path": "otpCodeSeparate",
-        "id": "plugin.official.workspace-connector.otpCodeSeparate",
+        "id": "plugin.official.integration-manager.otpCodeSeparate",
         "label": "Send sign-in codes separately",
-        "description": "Send only the code first, then quote-reply to it with the explanation. These settings apply to private sign-in, registration, and password recovery for this account. Use the Global scope when present; otherwise, enabled Workspace Connector scopes must use matching settings.",
+        "description": "Send only the code first, then quote-reply to it with the explanation. These settings apply to private sign-in, registration, and password recovery for this account. Use the Global scope when present; otherwise, enabled Integration Manager scopes must use matching settings.",
         "section": "Sign-in codes",
         "order": 40,
         "schema": {
@@ -177,7 +200,7 @@
         },
         "ui": {
           "widget": "toggle",
-          "helpText": "Send only the code first, then quote-reply to it with the explanation. These settings apply to private sign-in, registration, and password recovery for this account. Use the Global scope when present; otherwise, enabled Workspace Connector scopes must use matching settings."
+          "helpText": "Send only the code first, then quote-reply to it with the explanation. These settings apply to private sign-in, registration, and password recovery for this account. Use the Global scope when present; otherwise, enabled Integration Manager scopes must use matching settings."
         },
         "dangerous": false,
         "sensitivity": {
@@ -189,9 +212,9 @@
       },
       {
         "path": "otpLoginExplanation",
-        "id": "plugin.official.workspace-connector.otpLoginExplanation",
+        "id": "plugin.official.integration-manager.otpLoginExplanation",
         "label": "Sign-in code explanation",
-        "description": "Optional explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Workspace Connector scopes.",
+        "description": "Optional explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Integration Manager scopes.",
         "section": "Sign-in codes",
         "order": 41,
         "schema": {
@@ -201,7 +224,7 @@
         "ui": {
           "widget": "text",
           "multiline": true,
-          "helpText": "Optional explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Workspace Connector scopes."
+          "helpText": "Optional explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Integration Manager scopes."
         },
         "dangerous": false,
         "sensitivity": {
@@ -213,9 +236,9 @@
       },
       {
         "path": "otpRecoveryExplanation",
-        "id": "plugin.official.workspace-connector.otpRecoveryExplanation",
+        "id": "plugin.official.integration-manager.otpRecoveryExplanation",
         "label": "Password-recovery code explanation",
-        "description": "Optional recovery explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Workspace Connector scopes.",
+        "description": "Optional recovery explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Integration Manager scopes.",
         "section": "Sign-in codes",
         "order": 43,
         "schema": {
@@ -225,7 +248,7 @@
         "ui": {
           "widget": "text",
           "multiline": true,
-          "helpText": "Optional recovery explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Workspace Connector scopes."
+          "helpText": "Optional recovery explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Integration Manager scopes."
         },
         "dangerous": false,
         "sensitivity": {
@@ -236,18 +259,18 @@
         "relatedActionIds": []
       },
       {
-        "id": "plugin.official.workspace-connector.enabled",
+        "id": "plugin.official.integration-manager.enabled",
         "path": "enabled",
         "label": "Enabled",
-        "description": "Enable the Workspace connector for this managed scope.",
-        "section": "Workspace connector",
+        "description": "Enable the Integration Manager for this managed scope.",
+        "section": "Integration Manager",
         "order": 10,
         "schema": {
           "type": "boolean"
         },
         "ui": {
           "widget": "toggle",
-          "helpText": "Enable the Workspace connector for this managed scope."
+          "helpText": "Enable the Integration Manager for this managed scope."
         },
         "relatedCommandIds": [
           "/workspace status"
@@ -260,30 +283,21 @@
         "relatedActionIds": []
       },
       {
-        "id": "plugin.official.workspace-connector.allowedCapabilities",
-        "path": "allowedCapabilities",
-        "label": "Allowed capabilities",
-        "description": "Select the Workspace capabilities this scope may invoke or publish.",
-        "section": "Workspace connector",
+        "id": "plugin.official.integration-manager.websiteAccountAccess",
+        "path": "websiteAccountAccess",
+        "label": "Website account access",
+        "description": "Allow website registration, account linking and WhatsApp verification codes for this scope.",
+        "section": "Integration Manager",
         "order": 20,
         "schema": {
-          "type": "array",
-          "max": 128,
-          "items": {
-            "type": "string",
-            "min": 1,
-            "max": 160
-          }
+          "type": "boolean"
         },
         "ui": {
-          "widget": "entity-picker",
-          "dynamicOptions": {
-            "source": "workspace-capabilities"
-          },
-          "helpText": "Select permissions from the connected Workspace catalog. Search by description or identifier. Existing selections are preserved if the catalog is unavailable."
+          "widget": "toggle",
+          "helpText": "Allow website registration, account linking and WhatsApp verification codes for this scope."
         },
         "relatedCommandIds": [
-          "/workspace *"
+          "/register"
         ],
         "dangerous": false,
         "sensitivity": {
@@ -293,11 +307,11 @@
         "relatedActionIds": []
       },
       {
-        "id": "plugin.official.workspace-connector.deliveryChatId",
+        "id": "plugin.official.integration-manager.deliveryChatId",
         "path": "deliveryChatId",
         "label": "Delivery chat",
         "description": "Exact WhatsApp chat ID for Workspace deliveries addressed to this configured scope.",
-        "section": "Workspace connector",
+        "section": "Integration Manager",
         "order": 30,
         "schema": {
           "type": "string",
@@ -320,9 +334,9 @@
       },
       {
         "path": "otpRegistrationExplanation",
-        "id": "plugin.official.workspace-connector.otpRegistrationExplanation",
+        "id": "plugin.official.integration-manager.otpRegistrationExplanation",
         "label": "Registration code explanation",
-        "description": "Optional registration explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Workspace Connector scopes.",
+        "description": "Optional registration explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Integration Manager scopes.",
         "section": "Sign-in codes",
         "order": 42,
         "schema": {
@@ -332,7 +346,7 @@
         "ui": {
           "widget": "text",
           "multiline": true,
-          "helpText": "Optional registration explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Workspace Connector scopes."
+          "helpText": "Optional registration explanation sent as a reply to the isolated code. Leave blank for the localized default. Use the Global scope when present; otherwise, keep this setting identical across enabled Integration Manager scopes."
         },
         "dangerous": false,
         "sensitivity": {
@@ -345,5 +359,18 @@
     ],
     "pages": [],
     "internalConfigPaths": []
-  }
+  },
+  "workspaceCapabilities": [
+    {
+      "capabilityId": "account.registration.v1",
+      "commands": [
+        "/register"
+      ],
+      "enabledSetting": "websiteAccountAccess"
+    },
+    {
+      "capabilityId": "account.whatsapp-link.v1",
+      "enabledSetting": "websiteAccountAccess"
+    }
+  ]
 }

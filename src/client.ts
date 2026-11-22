@@ -94,6 +94,16 @@ export class WorkspaceConnectorClient {
     }, WorkspaceConnectorCatalogV2Schema);
   }
 
+  standaloneGallerySettings(signal?: AbortSignal) {
+    return this.#request('/v1/workspace-connector/v2/gallery-cutover-settings',
+      { method: 'GET', ...(signal ? { signal } : {}) }, z.object({
+        installationId: z.literal(this.#connection.installationId), maximumFileBytes: z.number().int().positive(),
+        inactivitySeconds: z.number().int().positive(), announcementDelaySeconds: z.number().int().nonnegative(),
+        announcementsEnabled: z.boolean(), announcementTarget: z.object({ chatId: z.string(), scopeId: z.string() }).nullable(),
+        announcementTemplate: z.string(), albumHintsEnabled: z.boolean(), albumHintText: z.string()
+      }).strict());
+  }
+
   invoke(input: WorkspaceConnectorInvocation, signal?: AbortSignal): Promise<WorkspaceConnectorInvocationResult> {
     return this.#request('/v1/workspace-connector/v1/invocations', {
       method: 'POST', body: JSON.stringify(WorkspaceConnectorInvocationSchema.parse(input)), ...(signal ? { signal } : {})
@@ -192,7 +202,7 @@ export class WorkspaceConnectorClient {
   async claimDeliveriesV2(limit = 20, signal?: AbortSignal, privateSessionScopes: Record<string, string[]> = {}): Promise<WorkspaceConnectorDeliveryV2[]> {
     const response = await this.#request(
       `/v1/workspace-connector/v2/deliveries?limit=${Math.max(1, Math.min(100, limit))}`,
-      { method: 'GET', headers: { 'x-workspace-supported-actions': 'start_session', 'x-workspace-private-session-scopes': JSON.stringify(privateSessionScopes) }, ...(signal ? { signal } : {}) },
+      { method: 'GET', headers: { 'x-workspace-delivery-origin': '1', 'x-workspace-supported-actions': 'start_session', 'x-workspace-private-session-scopes': JSON.stringify(privateSessionScopes) }, ...(signal ? { signal } : {}) },
       WorkspaceConnectorDeliveryClaimResponseV2Schema
     );
     return response.deliveries;
@@ -403,9 +413,9 @@ export class WorkspaceConnectorClient {
         }
       }
       const text = await readBoundedResponseText(response, MAX_JSON_BYTES);
-      if (!response.ok) throw new Error(`Workspace connector request was rejected with HTTP ${response.status}.`);
+      if (!response.ok) throw new Error(`Integration Manager request was rejected with HTTP ${response.status}.`);
       let payload: unknown;
-      try { payload = JSON.parse(text); } catch { throw new Error('Workspace connector response was not valid JSON.'); }
+      try { payload = JSON.parse(text); } catch { throw new Error('Integration Manager response was not valid JSON.'); }
       return schema.parse(payload);
     } finally {
       cancellation.dispose();
@@ -440,7 +450,7 @@ export class WorkspaceConnectorClient {
         response = await request();
       }
       if (!response.ok) {
-        throw new Error(`Workspace connector request was rejected with HTTP ${response.status}.`);
+        throw new Error(`Integration Manager request was rejected with HTTP ${response.status}.`);
       }
     } finally {
       cancellation.dispose();
@@ -454,7 +464,7 @@ async function readBoundedResponseText(response: Response, maximumBytes: number)
     lengthHeader !== null
     && (!/^(?:0|[1-9][0-9]*)$/u.test(lengthHeader) || Number(lengthHeader) > maximumBytes)
   ) {
-    throw new Error('Workspace connector response exceeded the size limit.');
+    throw new Error('Integration Manager response exceeded the size limit.');
   }
   if (!response.body) return '';
   const reader = response.body.getReader();
@@ -467,7 +477,7 @@ async function readBoundedResponseText(response: Response, maximumBytes: number)
       receivedBytes += value.byteLength;
       if (receivedBytes > maximumBytes) {
         await reader.cancel().catch(() => undefined);
-        throw new Error('Workspace connector response exceeded the size limit.');
+        throw new Error('Integration Manager response exceeded the size limit.');
       }
       chunks.push(Buffer.from(value));
     }
@@ -485,7 +495,7 @@ function requestCancellation(parent: AbortSignal | undefined, timeoutMs: number)
   const abortFromParent = () => controller.abort(parent?.reason);
   if (parent?.aborted) abortFromParent();
   else parent?.addEventListener('abort', abortFromParent, { once: true });
-  const timeout = setTimeout(() => controller.abort(new Error('Workspace connector request timed out.')), timeoutMs);
+  const timeout = setTimeout(() => controller.abort(new Error('Integration Manager request timed out.')), timeoutMs);
   timeout.unref();
   return {
     signal: controller.signal,

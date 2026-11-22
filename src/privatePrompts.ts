@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { FlowPromptLock } from '@wabs/plugin-sdk/flow-prompts';
 import type { WorkspaceConnectorClient } from './client';
 import { resolveWorkspaceActionRouteV2, workspaceActionsToPluginActionsV2 } from './commands';
-import { parseWorkspaceConnectorConfig } from './config';
+import { workspaceScope } from './ownership';
 import { WorkspaceConnectorInvocationResultV2Schema } from './contracts/workspace-connector-v0.3';
 import { WORKSPACE_CONNECTOR_SESSION_TIMER_JOB } from './manifest';
 import {
@@ -27,7 +27,7 @@ const promptRecordSchema = z.object({
 });
 type PromptRecord = z.infer<typeof promptRecordSchema>;
 type PromptContext = Pick<PluginRuntimeContext,
-  'flowEngine' | 'dataStore' | 'i18n' | 'sendText' | 'configFor' | 'resolveStableIdentityById'
+  'catalog' | 'flowEngine' | 'dataStore' | 'i18n' | 'sendText' | 'configFor' | 'resolveStableIdentityById'
   | 'currentMemberIdentityIdsForScope' | 'coveredGroupsForScope' | 'enqueuePluginJob'>;
 type PromptDeliveryContext = Pick<PromptContext, 'flowEngine' | 'dataStore' | 'i18n'>;
 const privateSessionOperations = new Map<string, Promise<unknown>>();
@@ -180,7 +180,7 @@ async function adoptWorkspacePrivateChoiceUnlocked(
     || new Date(pending.data.expiresAt).getTime() <= Date.now())) return false;
   const actor = await context.resolveStableIdentityById?.(actorIdentityId);
   const members = await context.currentMemberIdentityIdsForScope?.(session.scopeId);
-  const config = parseWorkspaceConnectorConfig(await context.configFor(session.scopeId));
+  const config = await workspaceScope(context, session.scopeId, session.actorIdentityId);
   if (!actor || actor.identityId !== session.actorIdentityId || actor.deliveryChatId !== session.actorPrivateChatId
     || !members?.includes(actorIdentityId) || !config.enabled
     || !config.allowedCapabilities.includes(workspaceSessionContinuationCapabilityId(session))) return false;
@@ -188,7 +188,7 @@ async function adoptWorkspacePrivateChoiceUnlocked(
   const t = await context.i18n.translatorForIdentity(actorIdentityId, session.scopeId);
   await deliverWorkspacePrivateChoice(context, session,
     pending?.success ? pending.data.question : t(session.choices.length
-      ? 'official.workspace-connector.resumePrivatePrompt' : 'official.workspace-connector.resumePrivateTextPrompt'),
+      ? 'official.integration-manager.resumePrivatePrompt' : 'official.integration-manager.resumePrivateTextPrompt'),
     pending?.success ? pending.data.idempotencyKey : `workspace-private-resume:${installationId}:${actorIdentityId}:${session.sessionId}`,
     pending?.success ? new Date(pending.data.expiresAt) : new Date(session.expiresAt));
   return true;
@@ -239,7 +239,7 @@ async function continuePrivateChoice(
     let cannotContinue = isWhatsappLink && record.whatsappLinkCannotContinue === true;
     if (!cannotContinue) {
       const members = await context.currentMemberIdentityIdsForScope?.(session.scopeId);
-      const config = parseWorkspaceConnectorConfig(await context.configFor(session.scopeId));
+      const config = await workspaceScope(context, session.scopeId, session.actorIdentityId);
       cannotContinue = !members?.includes(actor.identityId) || !config.enabled || !config.allowedCapabilities.includes(capabilityId);
     }
     if (cannotContinue) {
@@ -275,7 +275,7 @@ async function continuePrivateChoice(
     } catch (error) {
       if (capabilityId === 'gallery.media.upload.v1' && !record.failureNotified && context.sendText) {
         const t = await context.i18n.translatorForIdentity(session.actorIdentityId, session.scopeId);
-        await context.sendText(session.actorPrivateChatId, t('official.workspace-connector.unavailable'), {
+        await context.sendText(session.actorPrivateChatId, t('official.integration-manager.unavailable'), {
           idempotencyKey: `workspace-choice-v2:${lock.flowPromptId}:unavailable`, waitForServerAck: true
         });
         record.failureNotified = true;
@@ -342,7 +342,7 @@ async function acknowledgeWhatsappLinkResponse(
   const { session } = record;
   const t = context.i18n.translator(session.locale);
   const key = outcome === 'received'
-    ? 'official.workspace-connector.whatsappLink.received' : 'official.workspace-connector.whatsappLink.cannotContinue';
+    ? 'official.integration-manager.whatsappLink.received' : 'official.integration-manager.whatsappLink.cannotContinue';
   // Stable text and key preserve the transport's message identity across locked-prompt retries.
   await context.sendText(session.actorPrivateChatId, t(key), {
     idempotencyKey: `workspace-choice-v2:${flowPromptId}:${outcome}`, waitForServerAck: true

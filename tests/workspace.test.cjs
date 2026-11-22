@@ -7,7 +7,6 @@ const { workspaceConnectorConnection } = require('../dist/config');
 const { rememberWorkspaceSession, findWorkspaceMediaSession } = require('../dist/mediaSessions');
 const { handleWorkspaceSessionMessage } = require('../dist/hooks');
 const { createWorkspaceConnectorHooks } = require('../dist/hooks');
-const { publishCapabilityOptions } = require('../dist/capabilityOptions');
 const connection = { baseUrl: 'https://workspace.example', oidcIssuer: 'https://identity.example/realms/fixture',
   clientId: 'fixture', clientSecret: 'fixture', audience: 'fixture-api', installationId: 'fixture-installation' };
 const t = (key) => plugin.manifest.defaultMessages[key] ?? key;
@@ -19,7 +18,10 @@ function storeFrom(rows = new Map()) {
     delete: async (key) => Number(rows.delete(key)), list: async () => [] };
 }
 function context(dataStore = storeFrom()) {
-  return { pluginId: plugin.manifest.pluginId, manifest: plugin.manifest, config: {}, dataStore,
+  return { catalog: {
+    listManifests: () => [{ pluginId: 'fixture.submission', workspaceCapabilities: [{ capabilityId: 'fixture.submit.v1',
+      commands: ['/documents'], triggers: ['fixture.media-burst'] }] }],
+    enabledFor: async () => true, configFor: async () => ({}) }, pluginId: plugin.manifest.pluginId, manifest: plugin.manifest, config: {}, dataStore,
     configFor: async () => ({ enabled: false, deliveryChatId: 'fixture@g.us', allowedCapabilities: ['fixture.submit.v1'] }),
     enabledFor: async () => true, ephemeralStore: {}, logger: { warn() {} },
     i18n: { translator: () => t, translatorForIdentity: async () => t,
@@ -33,34 +35,13 @@ function catalog() {
 }
 
 test('preserves scoped settings and rejects an unsafe deployment endpoint', () => {
-  const value = { enabled: true, deliveryChatId: 'fixture@g.us', allowedCapabilities: ['fixture.submit.v1'] };
+  const value = { enabled: true, deliveryChatId: 'fixture@g.us', websiteAccountAccess: false };
   assert.deepEqual(plugin.manifest.configSchema.parse(value), { ...value, otpCodeSeparate: false, otpLoginExplanation: '', otpRecoveryExplanation: '', otpRegistrationExplanation: '' });
   assert.equal(plugin.manifest.configSchema.parse({ otpCodeSeparate: true }).otpCodeSeparate, true);
   assert.throws(() => plugin.manifest.configSchema.parse({ otpLoginExplanation: 'x'.repeat(401) }));
   assert.equal(workspaceConnectorConnection({}), undefined);
   assert.throws(() => workspaceConnectorConnection({ WORKSPACE_CONNECTOR_BASE_URL: 'http://workspace.example' }), /canonical HTTPS/);
   assert.throws(() => workspaceConnectorConnection({ WORKSPACE_CONNECTOR_BASE_URL: 'https://workspace.example/?redirect=elsewhere' }), /canonical HTTPS/);
-});
-
-test('publishes account and installation bound capability selector options', async () => {
-  const dataStore = storeFrom();
-  const ctx = context(dataStore);
-  ctx.config = { WHATSAPP_ACCOUNT_ID: 'account-one' };
-  await publishCapabilityOptions(ctx, connection, catalog(), {
-    protocolVersion: 2, workspaceId: 'fixture-workspace', workspaceLabel: 'Fixture workspace', revision: 8,
-    aliases: [{ namespace: 'register', capabilityId: 'account.registration.v1', contexts: ['private'],
-      descriptionByLocale: { en: 'Register an account', 'pt-PT': 'Registar uma conta' },
-      usageByLocale: { en: '/register', 'pt-PT': '/register' } }],
-    capabilities: [{ capabilityId: 'account.registration.v1', interfaces: ['interactive'], maximumPayloadBytes: 8192,
-      mediaMimeTypes: [], cancellationSupported: false }], ambientTriggers: [], digestSha256: digest
-  });
-  const [[key, snapshot]] = [...dataStore.rows];
-  assert.match(key, /^capability-options:v1:account-one:fixture-installation$/);
-  assert.equal(snapshot.accountId, 'account-one');
-  assert.deepEqual(snapshot.options.find(option => option.value === 'account.registration.v1'), {
-    value: 'account.registration.v1', label: 'Register an account', reference: 'account.registration.v1',
-    searchText: 'account.registration.v1 Register an account Register an account Registar uma conta'
-  });
 });
 
 test('registers commands, cancellations and hooks without deployment credentials or network work', async () => {
@@ -89,7 +70,8 @@ test('v2 delivery polling succeeds when the retired v1 delivery endpoint is unav
     WORKSPACE_CONNECTOR_INSTALLATION_ID: 'fixture-installation',
     WORKSPACE_CONNECTOR_DELIVERY_POLL_ENABLED: true, workspaceConnectorOidcClientSecret: 'fixture-secret-for-tests' };
   ctx.listEnabledScopes = async () => [{ scopeId: 'gallery-scope', name: 'Gallery' }];
-  ctx.configFor = async () => ({ enabled: true, deliveryChatId: '', allowedCapabilities: ['account.whatsapp-link.v1'] });
+  ctx.catalog.listManifests = () => [plugin.manifest];
+  ctx.configFor = async () => ({ enabled: true, websiteAccountAccess: true });
   let observed;
   const result = new Promise((resolve) => { observed = resolve; });
   t.mock.method(WorkspaceConnectorClient.prototype, 'claimDeliveries', async () => {
@@ -104,7 +86,7 @@ test('v2 delivery polling succeeds when the retired v1 delivery endpoint is unav
   try {
     assert.deepEqual(await Promise.race([result, new Promise((_, reject) =>
       setTimeout(() => reject(new Error('Delivery polling did not run')), 500))]),
-    { 'gallery-scope': ['account.whatsapp-link.v1'] });
+    { 'gallery-scope': ['account.registration.v1', 'account.whatsapp-link.v1'] });
   } finally {
     hooks.onShutdown?.();
   }
@@ -116,18 +98,13 @@ test('private v2 aliases select a community scope rather than prompting for each
     capabilities: [{ capabilityId: 'fixture.submit.v1', interfaces: ['interactive'], maximumPayloadBytes: 8192, mediaMimeTypes: [], cancellationSupported: false }], ambientTriggers: [], digestSha256: digest };
   const ctx = context(storeFrom(new Map([['catalog:v1', { ...catalog(), aliases: [] }], ['catalog:v2', v2]])));
   ctx.config = { WORKSPACE_CONNECTOR_BASE_URL: 'https://workspace.example', WORKSPACE_CONNECTOR_OIDC_ISSUER: 'https://identity.example/realms/fixture', WORKSPACE_CONNECTOR_OIDC_CLIENT_ID: 'fixture', WORKSPACE_CONNECTOR_OIDC_AUDIENCE: 'fixture-api', WORKSPACE_CONNECTOR_INSTALLATION_ID: 'fixture-installation', workspaceConnectorOidcClientSecret: 'fixture-secret-for-tests' };
-  let aliases;
-  ctx.router = { register() {}, listCommands: () => [], replaceNamespaceAliasesAtomically: (_pluginId, value) => { aliases = value; } };
-  t.mock.method(WorkspaceConnectorClient.prototype, 'catalog', async () => { throw Error('Offline'); });
-  let dispose;
-  ctx.registerDisposer = callback => { dispose = callback; };
+  const commands = [];
+  ctx.router = { register: (ns, sub, metadata) => commands.push({ ns, sub, metadata }) };
   await plugin.registerCommands(ctx);
-  try {
-    const commands = aliases.flatMap(alias => alias.commands ?? []);
-    const metadata = commands[0]?.metadata ?? aliases.find(alias => alias.namespace === 'documents')?.metadata;
-    assert.equal(metadata.privateManagedTarget.collapseCommunities, true);
-    assert.equal(metadata.currentManagedGroupMembershipMode, 'effective_scope');
-  } finally { dispose?.(); }
+  assert.deepEqual(commands.map(c => c.ns), ['workspace', 'workspace', 'register']);
+  const metadata = commands.find(command => command.ns === 'register').metadata;
+  assert.equal(metadata.privateManagedTarget.collapseCommunities, true);
+  assert.equal(metadata.currentManagedGroupMembershipMode, 'effective_scope');
 });
 
 test('unwrapped media bursts enqueue the same authorized ambient job as an explicit album', async (t) => {
@@ -168,7 +145,7 @@ test('reads a persisted v1 session after restart and preserves catalog and actor
     request = input;
     return { protocolVersion: 1, invocationId: 'fixture-continuation', actions: [{ kind: 'complete', text: 'Fixture accepted.' }] };
   } };
-  const actions = await handleWorkspaceSessionMessage(context(current), client, connection.installationId, {
+  const actions = await handleWorkspaceSessionMessage({ ...context(current), configFor: async () => ({ enabled: true }) }, client, connection.installationId, {
     pluginId: plugin.manifest.pluginId, scopeId: 'fixture-scope', groupId: 'fixture-group', groupWid: 'fixture@g.us', managementMode: 'MANAGE',
     receivedAt: new Date(), actorIdentityId: actor.identityId, actorWid: 'fixture@c.us',
     actor: { wid: 'fixture@c.us', fromMe: false, identityAddress: { ...actor, canonicalWid: 'fixture@c.us', aliases: [] } },
@@ -217,7 +194,7 @@ test('refreshes a rejected service token once and rejects an unavailable remote'
 
 test('includes complete Portuguese messages and unmodified licensed protocol bytes', () => {
   const metadata = require('../wa-plugin.json');
-  const pt = require('../locales/pt-PT/official.workspace-connector.json');
+  const pt = require('../locales/pt-PT/official.integration-manager.json');
   assert.equal(metadata.version, plugin.manifest.version);
   assert.equal(metadata.operatorConsole.controls.length, 7);
   for (const key of Object.keys(plugin.manifest.defaultMessages)) assert.ok(pt[key]?.trim(), key);
