@@ -1,10 +1,10 @@
 {
   "official.integration-manager.whatsappLink.received": "Recebi a tua resposta. Estou a verificar a associação.",
   "official.integration-manager.whatsappLink.cannotContinue": "Recebi a tua resposta, mas já não é possível continuar esta associação.",
-  "official.integration-manager.description": "Liga este bot a uma autoridade de Espaço de Trabalho externo sem incorporar regras de negócio específicas de aplicações.",
+  "official.integration-manager.description": "Liga o bot ao respetivo Espaço de Trabalho, gere o registo e a associação de contas através de /register e entrega pedidos, respostas e avisos de conta das integrações ativas.",
   "official.integration-manager.help.family": "Integration Manager",
   "official.integration-manager.help.feature.title": "Integration Manager",
-  "official.integration-manager.help.feature.summary": "Consulta ou usa capacidades neutras de aplicação publicadas pelo Espaço de Trabalho configurado.",
+  "official.integration-manager.help.feature.summary": "Use /register para registar ou associar uma conta e /workspace para consultar as integrações disponíveis neste âmbito.",
   "official.integration-manager.help.status.title": "Estado do Espaço de Trabalho",
   "official.integration-manager.help.status.summary": "Verifica se o conector do Espaço de Trabalho está ativo e configurado.",
   "official.integration-manager.help.status.instruction": "Usa /workspace status num grupo gerido.",

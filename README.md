@@ -1,5 +1,7 @@
 # Integration Manager
 
+Connects the bot to its Workspace, handles account registration and linking through /register, and delivers requests, replies and account notices for enabled integrations.
+
 Integration Manager connects WABP to Workspace, publishes scoped memberships, and runs one delivery poller per account runtime. It owns the shared machine credential, sessions, staged media, retries and delivery receipts. Enable the connection in the required scopes. The **Website account access** switch enables registration, account linking, and sensitive WhatsApp sign-in and recovery messages. Turning off the last participating scope stops pending code delivery.
 
 Use `/register` for website registration and `/workspace status` to inspect the connection. Compatibility commands such as `/workspace gallery` require the same enabled app, scope, membership and authenticated catalog entry as the native command. **Piwigo** owns `/gallery`. **Calendar** accepts projections from Community Events. **Chat Archive** controls external access, links and notices.
