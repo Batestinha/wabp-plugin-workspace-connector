@@ -21,6 +21,13 @@ export type PluginRuntimeContext = IntegrationRuntimeContext<WorkspaceConnectorD
   flowEngine?: WorkspacePromptEngine | undefined;
   /** WABP core API 0.3.24: active moderation standings of a scope where this plugin is enabled. */
   memberStandingsForScope?: ((scopeId: string) => Promise<Array<{ identityId: string; standing: 'suspended' | 'expelled' }>>) | undefined;
+  getAuthoritativeGroupParticipantSnapshot?: ((groupWid: string) => Promise<{
+    participants: ReadonlyArray<{ wid: string }>;
+    providerId: string;
+    observedAt: Date;
+    botWid: string;
+  }>) | undefined;
+  resolveIdentityAddress?: ((wid: string) => Promise<{ identityId: string }>) | undefined;
 };
 export type PluginServiceRegistrationContext = IntegrationServiceContext<WorkspaceConnectorDeploymentConfig> &
   Pick<PluginRuntimeContext, 'catalog'> & Partial<Pick<PluginRuntimeContext, 'flowEngine' | 'dataStore' | 'enqueuePluginJob' |

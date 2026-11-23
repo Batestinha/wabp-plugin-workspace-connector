@@ -5,6 +5,7 @@ import { WorkspaceConnectorClient } from './client';
 import { dispatchWorkspaceCommand } from './commands';
 import { workspaceConnectorConnection } from './config';
 import { workspaceScope } from './ownership';
+import { scopeMemberIdentityIds } from './scopeMembershipDirectory';
 import {
   INVOCATION_SERVICE_ID, LEGACY_PROJECTION_SERVICE_ID, invocationInput,
   WORKSPACE_CONNECTOR_PROJECTION_SERVICE_ID, workspaceConnectorProjectionServiceInputSchema,
@@ -50,7 +51,7 @@ export function registerWorkspaceConnectorServices(context: PluginServiceRegistr
         const groupWid = call.groupWid ?? (input.surface === 'group' ? input.chatId : undefined);
         if (!groups?.some(group => group.groupWid === groupWid) ||
           (input.surface === 'group' ? input.chatId !== groupWid : input.chatId !== actor.deliveryChatId) ||
-          !(await context.currentMemberIdentityIdsForScope?.(call.scopeId))?.includes(actor.identityId)) {
+          !(await scopeMemberIdentityIds(context, call.scopeId))?.includes(actor.identityId)) {
           throw new Error('Workspace command is outside the effective scope.');
         }
         const { locale } = await context.i18n.resolveIdentityLocale(actor.identityId, call.scopeId);

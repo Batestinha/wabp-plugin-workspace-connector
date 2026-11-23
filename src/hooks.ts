@@ -58,12 +58,29 @@ import {
   type WorkspaceMediaRetry
 } from './mediaRetries';
 import { refreshWorkspaceScopeDirectory } from './scopeDirectory';
-import { refreshWorkspaceScopeMemberships } from './scopeMembershipDirectory';
+import { heartbeatWorkspaceScopeMemberships, noteParticipantMembership, refreshWorkspaceScopeMemberships, scopeMemberIdentityIds } from './scopeMembershipDirectory';
 import { adoptWorkspacePrivateChoice, deliverWorkspacePrivateChoice, recoverWorkspacePrivateChoices,
   registerWorkspacePrivateChoiceHandler, withWorkspacePrivateSessionLock, workspacePrivatePromptReceipt } from './privatePrompts';
 
 const DELIVERY_POLL_INTERVAL_MS = 15_000;
 const SCOPE_DIRECTORY_REFRESH_INTERVAL_MS = 60_000;
+const MEMBERSHIP_SEED_RETRY_MS = 15 * 60_000;
+const MEMBERSHIP_REPAIR_INTERVAL_MS = 30 * 60_000;
+
+function membershipRetryDelay(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const candidate = error as { code?: unknown; name?: unknown; retryAt?: unknown; retryAfterMs?: unknown };
+  if (candidate.code !== 'rate_overlimit' && candidate.name !== 'TransportRateLimitError') return undefined;
+  if (candidate.retryAt instanceof Date) return Math.max(1_000, candidate.retryAt.getTime() - Date.now());
+  if (typeof candidate.retryAt === 'string') {
+    const at = Date.parse(candidate.retryAt);
+    if (Number.isFinite(at)) return Math.max(1_000, at - Date.now());
+  }
+  if (typeof candidate.retryAfterMs === 'number' && Number.isFinite(candidate.retryAfterMs) && candidate.retryAfterMs > 0) {
+    return candidate.retryAfterMs;
+  }
+  return MEMBERSHIP_SEED_RETRY_MS;
+}
 const DELIVERY_MEDIA_TIMEOUT_MS = 10 * 60_000;
 const MAX_DELIVERY_MEDIA_BYTES = 25 * 1024 * 1024 * 1024;
 
@@ -120,19 +137,51 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
   };
 
   let scopeMembershipRefresh: Promise<void> | undefined;
+  let membershipRetry: ReturnType<typeof setTimeout> | undefined;
+  let membershipTail: Promise<void> = Promise.resolve();
+  // The job dispatcher forces delivery polling off. It must not own this roster.
+  const ownsMembershipRoster = context.config.WORKSPACE_CONNECTOR_DELIVERY_POLL_ENABLED === true;
+  const enqueueMembership = (work: () => Promise<void>): Promise<void> => {
+    const run = membershipTail.then(work, work);
+    membershipTail = run.then(() => undefined, () => undefined);
+    return run;
+  };
   const refreshScopeMemberships = (): Promise<void> => {
     if (scopeMembershipRefresh) return scopeMembershipRefresh;
-    scopeMembershipRefresh = (async () => {
+    scopeMembershipRefresh = enqueueMembership(async () => {
       if (!await workspaceV2IsInstalled(context)) return;
       await refreshWorkspaceScopeMemberships(context, client, connection.installationId);
-    })()
-      .catch((error) => {
-        context.logger.warn({ error }, 'Workspace v1 scope-membership refresh failed');
+    })
+      .catch((error: unknown) => {
+        const preserved = Boolean(error && typeof error === 'object' && (error as { directoryPreserved?: unknown }).directoryPreserved === true);
+        context.logger.warn({ error }, preserved
+          ? 'Workspace v1 scope-membership repair kept the previous roster'
+          : 'Workspace v1 scope-membership refresh failed');
+        scheduleMembershipSeed(error);
       })
       .finally(() => {
         scopeMembershipRefresh = undefined;
       });
     return scopeMembershipRefresh;
+  };
+  const scheduleMembershipSeed = (error: unknown): void => {
+    if (stopped || membershipRetry || !ownsMembershipRoster) return;
+    const delay = membershipRetryDelay(error);
+    if (delay === undefined) return;
+    membershipRetry = setTimeout(() => {
+      membershipRetry = undefined;
+      void refreshScopeMemberships();
+    }, delay);
+    membershipRetry.unref();
+  };
+  const beatScopeMemberships = (): Promise<void> => {
+    if (scopeMembershipRefresh) return scopeMembershipRefresh;
+    return enqueueMembership(async () => {
+      if (!await workspaceV2IsInstalled(context)) return;
+      await heartbeatWorkspaceScopeMemberships(context, client, connection.installationId);
+    }).catch((error: unknown) => {
+      context.logger.warn({ error }, 'Workspace v1 scope-membership heartbeat failed');
+    });
   };
 
   const poll = async (): Promise<void> => {
@@ -179,13 +228,17 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
   const scopeDirectoryTimer = setInterval(
     () => {
       void refreshScopeDirectory();
-      void refreshScopeMemberships();
+      if (ownsMembershipRoster) void beatScopeMemberships();
     },
     SCOPE_DIRECTORY_REFRESH_INTERVAL_MS
   );
   scopeDirectoryTimer.unref();
+  const membershipRepairTimer = ownsMembershipRoster
+    ? setInterval(() => { void refreshScopeMemberships(); }, MEMBERSHIP_REPAIR_INTERVAL_MS)
+    : undefined;
+  membershipRepairTimer?.unref();
   void refreshScopeDirectory();
-  void refreshScopeMemberships();
+  if (ownsMembershipRoster) void refreshScopeMemberships();
 
   return {
     async resolvePrivateMessageRoute(envelope) {
@@ -217,10 +270,22 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
       return enqueueWorkspaceAmbientEvent(context, connection.installationId, event, albumObservations);
     },
     async onGroupScopeCovered() {
-      await Promise.all([refreshScopeDirectory(), refreshScopeMemberships()]);
+      await Promise.all([
+        refreshScopeDirectory(),
+        ...(ownsMembershipRoster ? [refreshScopeMemberships()] : [])
+      ]);
     },
-    async onParticipantChange() {
-      await refreshScopeMemberships();
+    async onParticipantChange(event) {
+      await enqueueMembership(async () => {
+        await noteParticipantMembership(context, client, connection.installationId, {
+          scopeId: event.scopeId,
+          action: event.action,
+          identityIds: event.affectedIdentities.map((identity) => identity.identityId),
+          ...(event.groupWid || event.chatId ? { groupWid: event.groupWid ?? event.chatId } : {})
+        });
+      }).catch((error: unknown) => {
+        context.logger.warn({ error }, 'Workspace v1 scope-membership update failed');
+      });
     },
     async onPluginJob(job) {
       if (job.jobName === WORKSPACE_CONNECTOR_SESSION_TIMER_JOB) {
@@ -235,6 +300,8 @@ export function createWorkspaceConnectorHooks(context: PluginRuntimeContext): Pl
       stopped = true;
       if (timer) clearInterval(timer);
       clearInterval(scopeDirectoryTimer);
+      if (membershipRepairTimer) clearInterval(membershipRepairTimer);
+      if (membershipRetry) clearTimeout(membershipRetry);
     }
   };
 }
@@ -344,7 +411,7 @@ async function handleWorkspaceSessionMessageV2(
   const currentActor = event.actor.identityAddress;
   if (currentActor.identityId !== session.actorIdentityId || event.actorIdentityId !== session.actorIdentityId) return;
   if (session.origin.surface === 'private' && event.message.chatId !== session.actorPrivateChatId) return;
-  const currentMembers = await context.currentMemberIdentityIdsForScope?.(session.scopeId);
+  const currentMembers = await scopeMemberIdentityIds(context, session.scopeId);
   if (!currentMembers?.includes(currentActor.identityId)) return [await reply(context, event, 'official.integration-manager.scopeUnavailable')];
   const body = event.message.body.trim();
   if (!body || (session.acceptedMessageKinds && session.choices.length === 0)) return;
@@ -533,7 +600,7 @@ async function executeWorkspaceDeliveryV2(
         return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'scope.unavailable');
       const actor = await context.resolveStableIdentityById(delivery.target.identityId);
       if (actor.identityId !== delivery.target.identityId) return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'identity.unavailable');
-      const members = await context.currentMemberIdentityIdsForScope?.(action.scopeId);
+      const members = await scopeMemberIdentityIds(context, action.scopeId);
       const groups = await context.coveredGroupsForScope?.(action.scopeId);
       if (!members?.includes(actor.identityId) || !groups?.[0]) return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'scope.unavailable');
       const promptKey = `workspace-v2:${delivery.idempotencyKey}`;
