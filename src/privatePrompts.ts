@@ -1,3 +1,4 @@
+import { withMessageSlot } from './messageSlot';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { FlowPromptLock } from '@wabs/plugin-sdk/flow-prompts';
@@ -276,9 +277,9 @@ async function continuePrivateChoice(
     } catch (error) {
       if (capabilityId === 'gallery.media.upload.v1' && !record.failureNotified && context.sendText) {
         const t = await context.i18n.translatorForIdentity(session.actorIdentityId, session.scopeId);
-        await context.sendText(session.actorPrivateChatId, t('official.integration-manager.unavailable'), {
+        await context.sendText(session.actorPrivateChatId, t('official.integration-manager.unavailable'), withMessageSlot('official.integration-manager.unavailable', {
           idempotencyKey: `workspace-choice-v2:${lock.flowPromptId}:unavailable`, waitForServerAck: true
-        });
+        }));
         record.failureNotified = true;
         await context.dataStore.set(lock.subjectId, record);
       }

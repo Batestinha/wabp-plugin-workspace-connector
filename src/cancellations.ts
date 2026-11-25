@@ -1,3 +1,4 @@
+import { withMessageSlot } from './messageSlot';
 import type { PluginCancellationRegistration } from '@wabs/plugin-sdk/cancellations';
 import type { PluginCommandContext } from './runtime';
 import { WorkspaceConnectorClient } from './client';
@@ -37,7 +38,7 @@ export function registerWorkspaceConnectorCancellations(
         return {
           workflowId: 'workspace-remote-session',
           cancelled: false,
-          text: t('official.integration-manager.cancelFailed'),
+          text: t('official.integration-manager.cancelFailed'), ...withMessageSlot('official.integration-manager.cancelFailed'),
           reason: 'connection-unavailable'
         };
       }
@@ -66,7 +67,7 @@ export function registerWorkspaceConnectorCancellations(
           return {
             workflowId: 'workspace-remote-session',
             cancelled: false,
-            text: t('official.integration-manager.cancelFailed'),
+            text: t('official.integration-manager.cancelFailed'), ...withMessageSlot('official.integration-manager.cancelFailed'),
             reason: 'remote-session-remained-active'
           };
         }
@@ -98,7 +99,7 @@ export function registerWorkspaceConnectorCancellations(
         return {
           workflowId: 'workspace-remote-session',
           cancelled: false,
-          text: t('official.integration-manager.cancelFailed'),
+          text: t('official.integration-manager.cancelFailed'), ...withMessageSlot('official.integration-manager.cancelFailed'),
           reason: 'remote-cancellation-failed'
         };
       }

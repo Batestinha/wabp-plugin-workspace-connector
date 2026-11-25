@@ -1,3 +1,4 @@
+import { withMessageSlot } from './messageSlot';
 import { createHash } from 'node:crypto';
 import { workspaceClaims, workspaceScope, type WorkspaceAccess } from './ownership';
 import type { StableIdentityAddressResolution } from '@wabs/plugin-sdk/identity';
@@ -40,10 +41,10 @@ export async function registerWorkspaceConnectorCommands(context: PluginCommandC
     const connection = workspaceConnectorConnection(context.config);
     return { handled: true, text: ctx.t('official.integration-manager.status', {
       enabled: String(scoped.enabled), configured: String(Boolean(connection)), installation: connection?.installationId ?? ''
-    }) };
+    }), ...withMessageSlot('official.integration-manager.status') };
   });
   const dispatch = async (ctx: CommandContext, command: string, owner?: string) => {
-    if (!ctx.actor || !context.configFor || !command) return { handled: true, text: ctx.t('official.integration-manager.usage') };
+    if (!ctx.actor || !context.configFor || !command) return { handled: true, text: ctx.t('official.integration-manager.usage'), ...withMessageSlot('official.integration-manager.usage') };
     return dispatchWorkspaceCommand({ ...context, configFor: context.configFor }, {
       ...ctx, scopeId: requireScopeId(ctx), actor: requireStableIdentityAddress(ctx.actor),
       args: ctx.remainingArgs ?? ctx.command.args
@@ -60,11 +61,11 @@ export async function registerWorkspaceConnectorCommands(context: PluginCommandC
 export async function dispatchWorkspaceCommand(
   context: InvocationHost, ctx: Invocation, command: string, caller?: string, requestedCapability?: string
 ): Promise<CommandResult> {
-  const deny = () => ({ handled: true, text: ctx.t('official.integration-manager.unknownCapability') });
+  const deny = () => ({ handled: true, text: ctx.t('official.integration-manager.unknownCapability'), ...withMessageSlot('official.integration-manager.unknownCapability') });
   const claim = workspaceClaims(context).find(entry => entry.commands?.includes('/' + command));
   if (!claim || (caller && claim.owner !== caller) || (requestedCapability && claim.capabilityId !== requestedCapability)) return deny();
   const connection = workspaceConnectorConnection(context.config);
-  if (!connection) return { handled: true, text: ctx.t('official.integration-manager.unavailable') };
+  if (!connection) return { handled: true, text: ctx.t('official.integration-manager.unavailable'), ...withMessageSlot('official.integration-manager.unavailable') };
   const client = new WorkspaceConnectorClient(connection);
   try {
     const scope = await workspaceScope(context, requireScopeId(ctx), ctx.actor.identityId);
@@ -80,7 +81,7 @@ export async function dispatchWorkspaceCommand(
     const alias = v1.aliases.find(item => item.namespace === command && item.capabilityId === claim.capabilityId);
     return alias ? await invokeWorkspaceAliasV1(context, ctx, v1, alias, client) : deny();
   } catch {
-    return { handled: true, text: ctx.t('official.integration-manager.unavailable') };
+    return { handled: true, text: ctx.t('official.integration-manager.unavailable'), ...withMessageSlot('official.integration-manager.unavailable') };
   }
 }
 
@@ -93,15 +94,15 @@ async function invokeWorkspaceAliasV1(
 ) {
   const actor = ctx.actor;
   const connection = workspaceConnectorConnection(context.config);
-  if (!connection) return { handled: true, text: ctx.t('official.integration-manager.unavailable') };
+  if (!connection) return { handled: true, text: ctx.t('official.integration-manager.unavailable'), ...withMessageSlot('official.integration-manager.unavailable') };
   const privateInvocation = ctx.message.context === 'private';
   if (!alias.contexts.includes(privateInvocation ? 'private' : 'group')) {
-    return { handled: true, text: ctx.t('official.integration-manager.unknownCapability') };
+    return { handled: true, text: ctx.t('official.integration-manager.unknownCapability'), ...withMessageSlot('official.integration-manager.unknownCapability') };
   }
   const scopeId = privateInvocation ? `direct:${connection.installationId}` : requireScopeId(ctx);
   const scoped = await workspaceScope(context, requireScopeId(ctx), actor.identityId);
   if (!scoped.allowedCapabilities.includes(alias.capabilityId)) {
-    return { handled: true, text: ctx.t('official.integration-manager.disabled') };
+    return { handled: true, text: ctx.t('official.integration-manager.disabled'), ...withMessageSlot('official.integration-manager.disabled') };
   }
   const workspaceActor = connectorActor(ctx);
   const surface = privateInvocation ? 'private' as const : 'group' as const;
@@ -160,19 +161,19 @@ async function invokeWorkspaceAliasV2Locked(
 ) {
   const actor = ctx.actor;
   const connection = workspaceConnectorConnection(context.config);
-  if (!connection) return { handled: true, text: ctx.t('official.integration-manager.unavailable') };
+  if (!connection) return { handled: true, text: ctx.t('official.integration-manager.unavailable'), ...withMessageSlot('official.integration-manager.unavailable') };
   const privateInvocation = ctx.message.context === 'private';
   if (!alias.contexts.includes(privateInvocation ? 'private' : 'group')) {
-    return { handled: true, text: ctx.t('official.integration-manager.unknownCapability') };
+    return { handled: true, text: ctx.t('official.integration-manager.unknownCapability'), ...withMessageSlot('official.integration-manager.unknownCapability') };
   }
   const scopeId = requireScopeId(ctx);
   const scoped = await workspaceScope(context, scopeId, actor.identityId);
   if (!scoped.enabled || !scoped.allowedCapabilities.includes(alias.capabilityId)) {
-    return { handled: true, text: ctx.t('official.integration-manager.disabled') };
+    return { handled: true, text: ctx.t('official.integration-manager.disabled'), ...withMessageSlot('official.integration-manager.disabled') };
   }
   const groupWid = ctx.groupWid?.trim() || (privateInvocation ? '' : ctx.message.chatId);
   if (!groupWid.endsWith('@g.us')) {
-    return { handled: true, text: ctx.t('official.integration-manager.scopeUnavailable') };
+    return { handled: true, text: ctx.t('official.integration-manager.scopeUnavailable'), ...withMessageSlot('official.integration-manager.scopeUnavailable') };
   }
   const origin = {
     chatId: ctx.message.chatId,
