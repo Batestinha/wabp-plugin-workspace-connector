@@ -76,3 +76,29 @@ test('only registration uses suspended identities and a pending return grants no
   await refreshWorkspaceScopeMemberships(ctx, sink, 'installation-1');
   assert.equal(sink.sent.at(-1).scopes[0].returningIdentityIds, undefined);
 });
+
+test('a cached group and an unrelated participant event cannot confirm reentry', async () => {
+  const { noteParticipantMembership } = require('../dist/scopeMembershipDirectory');
+  let held = true, readable = true;
+  const ctx = { ...context({ standings: async () => held ? [{ identityId: 'held', standing: 'suspended' }] : [] }),
+    listEnabledScopes: async () => [{ scopeId: 'community' }],
+    coveredGroupsForScope: async () => [{ groupWid: 'chat' }],
+    getAuthoritativeGroupParticipantSnapshot: async () => {
+      if (!readable) throw Error('unavailable');
+      return { providerId: 'whatsmeow', botWid: 'bot', observedAt: new Date(), participants: [{ wid: 'held' }] };
+    },
+    resolveIdentityAddress: async wid => ({ identityId: wid })
+  };
+  const sink = client();
+  const refresh = () => refreshWorkspaceScopeMemberships(ctx, sink, 'installation');
+  await refresh();
+  held = false;
+  readable = false;
+  await refresh();
+  assert.deepEqual(sink.sent.at(-1).scopes[0], { scopeId: 'community', memberIdentityIds: [], returningIdentityIds: ['held'] });
+  await noteParticipantMembership(ctx, sink, 'installation', { scopeId: 'community', groupWid: 'chat', action: 'join', identityIds: ['other'] });
+  assert.deepEqual(sink.sent.at(-1).scopes[0], { scopeId: 'community', memberIdentityIds: ['other'], returningIdentityIds: ['held'] });
+  readable = true;
+  await refresh();
+  assert.deepEqual(sink.sent.at(-1).scopes[0], { scopeId: 'community', memberIdentityIds: ['held'] });
+});

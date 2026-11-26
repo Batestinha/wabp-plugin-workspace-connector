@@ -170,6 +170,7 @@ async function refreshGroupsOneAtATime(
   const enabledScopeIds = new Set(enabledScopes.map((scope) => scope.scopeId));
   let rateLimit: unknown;
   const coveredByScope = new Map<string, string[]>();
+  const freshMembersByScope = new Map<string, Set<string>>();
   for (const scope of enabledScopes) {
     const covered = [...await coveredGroupsForScope(scope.scopeId)]
       .map((group) => group.groupWid.trim())
@@ -177,14 +178,16 @@ async function refreshGroupsOneAtATime(
       .sort((left, right) => left.localeCompare(right));
     coveredByScope.set(scope.scopeId, covered);
     const seen = new Set(covered);
+    const fresh = new Set<string>();
+    freshMembersByScope.set(scope.scopeId, fresh);
     for (const groupWid of covered) {
       const key = groupKey(scope.scopeId, groupWid);
       try {
-        groups.set(key, {
-          scopeId: scope.scopeId,
-          groupWid,
-          memberIdentityIds: await readGroupMemberIdentityIds(context, groupWid)
-        });
+        const snapshot = await readGroupMemberIdentityIds(context, groupWid);
+        groups.set(key, { scopeId: scope.scopeId, groupWid, memberIdentityIds: snapshot.identityIds });
+        if (snapshot.observedAt >= Date.parse(current.publishedAt)) {
+          for (const id of snapshot.identityIds) fresh.add(id);
+        }
       } catch (error) {
         if (isGroupNotFound(error)) {
           groups.delete(key);
@@ -214,14 +217,15 @@ async function refreshGroupsOneAtATime(
     const memberIdentityIds = previous && unread.length
       ? previous.memberIdentityIds
       : unionIdentityIds(rows);
-    scopes.push(await moderatedMembership(context, scope.scopeId, memberIdentityIds, previous));
+    const confirmed = freshMembersByScope.get(scope.scopeId)!;
+    scopes.push(await moderatedMembership(context, scope.scopeId, [...memberIdentityIds, ...confirmed], previous, confirmed));
   }
   const published = await publishScopesIfChanged(context, client, installationId, current, scopes, nextGroups);
   if (rateLimit) throw preservedRateLimit(rateLimit);
   return published;
 }
 
-async function readGroupMemberIdentityIds(context: PluginRuntimeContext, groupWid: string): Promise<string[]> {
+async function readGroupMemberIdentityIds(context: PluginRuntimeContext, groupWid: string) {
   const snapshot = await context.getAuthoritativeGroupParticipantSnapshot!(groupWid);
   const observedAt = snapshot.observedAt instanceof Date ? snapshot.observedAt.getTime() : Date.parse(String(snapshot.observedAt));
   const age = Date.now() - observedAt;
@@ -237,7 +241,7 @@ async function readGroupMemberIdentityIds(context: PluginRuntimeContext, groupWi
     if (!identityId) throw new Error('Authoritative group membership is unavailable');
     identityIds.add(identityId);
   }
-  return [...identityIds].sort((left, right) => left.localeCompare(right));
+  return { identityIds: [...identityIds].sort((left, right) => left.localeCompare(right)), observedAt };
 }
 
 function unionIdentityIds(rows: ReadonlyArray<{ memberIdentityIds: readonly string[] }>): string[] {
@@ -293,7 +297,7 @@ export async function heartbeatWorkspaceScopeMemberships(
   if (!stored.data.scopes) return false;
   if (Date.now() - Date.parse(stored.data.publishedAt) < MEMBERSHIP_HEARTBEAT_MS) return false;
   const scopes = await Promise.all(stored.data.scopes.map(scope =>
-    moderatedMembership(context, scope.scopeId, scope.memberIdentityIds, scope)));
+    moderatedMembership(context, scope.scopeId, scope.memberIdentityIds, scope, new Set())));
   await publishScopes(context, client, installationId, stored.data, scopes);
   return true;
 }
@@ -338,7 +342,7 @@ export async function noteParticipantMembership(
     else for (const identityId of identityIds) members.delete(identityId);
     memberIdentityIds = [...members].sort((left, right) => left.localeCompare(right));
   }
-  const next = await moderatedMembership(context, target.scopeId, memberIdentityIds, target);
+  const next = await moderatedMembership(context, target.scopeId, memberIdentityIds, target, new Set(adding ? identityIds : []));
   const index = scopes.findIndex((candidate) => candidate.scopeId === target.scopeId);
   scopes[index] = next;
   scopes.sort((left, right) => left.scopeId.localeCompare(right.scopeId));
@@ -423,12 +427,13 @@ async function publishScopes(
 /** A lifted suspension preserves approval while WhatsApp waits for the member to accept an invitation.
  * A pending return carries no membership or archive rights. An expulsion cancels it. */
 async function moderatedMembership(context: PluginRuntimeContext, scopeId: string, observed: readonly string[],
-  previous?: StoredMembershipScope): Promise<StoredMembershipScope> {
+  previous?: StoredMembershipScope, confirmed: ReadonlySet<string> = new Set(observed)): Promise<StoredMembershipScope> {
   const standings = await context.memberStandingsForScope?.(scopeId) ?? [];
   const held = new Map(standings.map(row => [row.identityId, row.standing]));
-  const members = new Set(observed.filter(id => !held.has(id)));
+  const awaitingReturn = new Set([...(previous?.suspendedIdentityIds ?? []), ...(previous?.returningIdentityIds ?? [])]);
+  const members = new Set(observed.filter(id => !held.has(id) && (!awaitingReturn.has(id) || confirmed.has(id))));
   const suspended = [...held].filter(([,kind]) => kind === 'suspended').map(([id]) => id).sort();
-  const returning = [...new Set([...(previous?.suspendedIdentityIds ?? []), ...(previous?.returningIdentityIds ?? [])])]
+  const returning = [...awaitingReturn]
     .filter(id => !members.has(id) && !held.has(id)).sort();
   return { scopeId, memberIdentityIds: [...members].sort((left, right) => left.localeCompare(right)),
     ...(suspended.length ? { suspendedIdentityIds: suspended } : {}),
