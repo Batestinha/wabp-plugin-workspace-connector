@@ -181,7 +181,7 @@ async function adoptWorkspacePrivateChoiceUnlocked(
     || await context.dataStore.get(`${session.privatePromptSubjectId}:receipt`) || pending.data.completed
     || new Date(pending.data.expiresAt).getTime() <= Date.now())) return false;
   const actor = await context.resolveStableIdentityById?.(actorIdentityId);
-  const members = await scopeMemberIdentityIds(context, session.scopeId);
+  const members = await scopeMemberIdentityIds(context, session.scopeId, workspaceSessionContinuationCapabilityId(session));
   const config = await workspaceScope(context, session.scopeId, session.actorIdentityId);
   if (!actor || actor.identityId !== session.actorIdentityId || actor.deliveryChatId !== session.actorPrivateChatId
     || !members?.includes(actorIdentityId) || !config.enabled
@@ -240,7 +240,7 @@ async function continuePrivateChoice(
   if (!isWhatsappLink || !record.result) {
     let cannotContinue = isWhatsappLink && record.whatsappLinkCannotContinue === true;
     if (!cannotContinue) {
-      const members = await scopeMemberIdentityIds(context, session.scopeId);
+      const members = await scopeMemberIdentityIds(context, session.scopeId, workspaceSessionContinuationCapabilityId(session));
       const config = await workspaceScope(context, session.scopeId, session.actorIdentityId);
       cannotContinue = !members?.includes(actor.identityId) || !config.enabled || !config.allowedCapabilities.includes(capabilityId);
     }

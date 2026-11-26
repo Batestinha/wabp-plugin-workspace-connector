@@ -411,7 +411,7 @@ async function handleWorkspaceSessionMessageV2(
   const currentActor = event.actor.identityAddress;
   if (currentActor.identityId !== session.actorIdentityId || event.actorIdentityId !== session.actorIdentityId) return;
   if (session.origin.surface === 'private' && event.message.chatId !== session.actorPrivateChatId) return;
-  const currentMembers = await scopeMemberIdentityIds(context, session.scopeId);
+  const currentMembers = await scopeMemberIdentityIds(context, session.scopeId, workspaceSessionContinuationCapabilityId(session));
   if (!currentMembers?.includes(currentActor.identityId)) return [await reply(context, event, 'official.integration-manager.scopeUnavailable')];
   const body = event.message.body.trim();
   if (!body || (session.acceptedMessageKinds && session.choices.length === 0)) return;
@@ -600,7 +600,7 @@ async function executeWorkspaceDeliveryV2(
         return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'scope.unavailable');
       const actor = await context.resolveStableIdentityById(delivery.target.identityId);
       if (actor.identityId !== delivery.target.identityId) return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'identity.unavailable');
-      const members = await scopeMemberIdentityIds(context, action.scopeId);
+      const members = await scopeMemberIdentityIds(context, action.scopeId, action.capabilityId);
       const groups = await context.coveredGroupsForScope?.(action.scopeId);
       if (!members?.includes(actor.identityId) || !groups?.[0]) return ackV2(delivery.deliveryId, 'terminal_failure', undefined, 'scope.unavailable');
       const promptKey = `workspace-v2:${delivery.idempotencyKey}`;

@@ -732,9 +732,19 @@ export const WorkspaceScopeMembershipReplaceV1Schema = z.object({
       .refine((values) => new Set(values).size === values.length, {
         message: 'suspended identity IDs must be unique'
       })
+      .optional(),
+    /** Approval continuity while a lifted suspension awaits actual group membership. Grants no access. */
+    returningIdentityIds: z.array(opaqueId).max(50_000)
+      .refine(values => new Set(values).size === values.length, { message: 'returning identity IDs must be unique' })
       .optional()
   }).strict().superRefine((scope, context) => {
     const members = new Set(scope.memberIdentityIds);
+    const held = new Set(scope.suspendedIdentityIds);
+    for (const [index, id] of (scope.returningIdentityIds ?? []).entries()) {
+      if (members.has(id) || held.has(id)) context.addIssue({
+        code: z.ZodIssueCode.custom, path: ['returningIdentityIds', index], message: 'returning identities must be disjoint'
+      });
+    }
     for (const [index, identityId] of (scope.suspendedIdentityIds ?? []).entries()) {
       if (members.has(identityId)) {
         context.addIssue({

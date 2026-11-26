@@ -26,7 +26,7 @@ function client() {
   };
 }
 
-test('publishes suspended non-members per scope, and only when someone is suspended', async () => {
+test('publishes a suspension before the WhatsApp removal catches up', async () => {
   const plain = client();
   await refreshWorkspaceScopeMemberships(context(), plain, 'installation-1');
   assert.deepEqual(plain.sent[0].scopes, [
@@ -46,7 +46,7 @@ test('publishes suspended non-members per scope, and only when someone is suspen
       : []
   }), suspended, 'installation-1');
   assert.deepEqual(suspended.sent[0].scopes, [
-    { scopeId: 'community', memberIdentityIds: ['member-a', 'member-b'], suspendedIdentityIds: ['suspended-c', 'suspended-z'] },
+    { scopeId: 'community', memberIdentityIds: ['member-b'], suspendedIdentityIds: ['member-a', 'suspended-c', 'suspended-z'] },
     { scopeId: 'standalone', memberIdentityIds: ['member-a'] }
   ]);
   assert.notEqual(suspended.sent[0].payloadSha256, plain.sent[0].payloadSha256);
@@ -58,4 +58,21 @@ test('rejects a directory that lists someone as both member and suspended', () =
     payloadSha256: 'a'.repeat(64), idempotencyKey: 'membership:1',
     scopes: [{ scopeId: 'community', memberIdentityIds: ['member-a'], suspendedIdentityIds: ['member-a'] }]
   }), /cannot also be a member/u);
+});
+
+test('only registration uses suspended identities and a pending return grants nothing', async () => {
+  const { scopeMemberIdentityIds } = require('../dist/scopeMembershipDirectory');
+  let standings = [{ identityId: 'held', standing: 'suspended' }];
+  const ctx = context({ standings: async () => standings });
+  const sink = client();
+  await refreshWorkspaceScopeMemberships(ctx, sink, 'installation-1');
+  assert.ok((await scopeMemberIdentityIds(ctx, 'community', 'account.registration.v1')).includes('held'));
+  assert.ok(!(await scopeMemberIdentityIds(ctx, 'community', 'gallery.upload.v1')).includes('held'));
+  standings = [];
+  await refreshWorkspaceScopeMemberships(ctx, sink, 'installation-1');
+  assert.deepEqual(sink.sent.at(-1).scopes[0].returningIdentityIds, ['held']);
+  assert.ok(!(await scopeMemberIdentityIds(ctx, 'community', 'account.registration.v1')).includes('held'));
+  standings = [{ identityId: 'held', standing: 'expelled' }];
+  await refreshWorkspaceScopeMemberships(ctx, sink, 'installation-1');
+  assert.equal(sink.sent.at(-1).scopes[0].returningIdentityIds, undefined);
 });
