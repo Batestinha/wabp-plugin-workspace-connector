@@ -1,6 +1,6 @@
 {
   "name": "@wabs/plugin-integration-manager",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Connects the bot to its Workspace, handles account registration and linking through /register, and delivers requests, replies and account notices for enabled integrations.",
   "license": "MIT",
   "private": true,

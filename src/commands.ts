@@ -183,7 +183,7 @@ async function invokeWorkspaceAliasV2Locked(
     ? {
         kind: 'private_resolution',
         scopeId,
-        basis: 'managed_scope_membership',
+        basis: alias.capabilityId === 'account.registration.v1' ? 'connector_binding' : 'managed_scope_membership',
         checkedAt: new Date().toISOString()
       }
     : {

@@ -8,6 +8,8 @@ Integration Manager connects WABP to Workspace, publishes scoped memberships, an
 
 Use `/register` for website registration and `/workspace status` to inspect the connection. Compatibility commands such as `/workspace gallery` require the same enabled app, scope, membership and authenticated catalog entry as the native command. **Piwigo** owns `/gallery`. **Calendar** accepts projections from Community Events. **Chat Archive** controls external access, links and notices.
 
+A suspended member can use `/register` in private or register in the browser. The owner can approve read-only access to the chats retained by the suspension. After a confirmed return to the group, the same account receives its ordinary scope permissions. Waiting for an invitation preserves approval and grants no access.
+
 Upgrade from `official.workspace-connector` with the coordinated WABP cutover. The previous dependency and projection service remain available during migration. Existing data keys, staged payloads, provider message IDs and delivery receipts carry forward.
 
 The account's Global settings control OTP formatting where available. Otherwise participating scopes must agree. The sensitive delivery service retains its existing acknowledgement and replay rules.

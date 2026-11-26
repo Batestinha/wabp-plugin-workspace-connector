@@ -16,7 +16,8 @@ const MEMBERSHIP_REMOVE_ACTIONS = new Set(['leave', 'remove']);
 const storedMembershipScopeSchema = z.object({
   scopeId: z.string().min(1),
   memberIdentityIds: z.array(z.string()),
-  suspendedIdentityIds: z.array(z.string()).optional()
+  suspendedIdentityIds: z.array(z.string()).optional(),
+  returningIdentityIds: z.array(z.string()).optional()
 }).strict();
 
 const storedMembershipGroupSchema = z.object({
@@ -50,11 +51,15 @@ export interface WorkspaceScopeMembershipClient {
 /** Members from the stored roster. A scope with no stored roster falls back to the host callback. */
 export async function scopeMemberIdentityIds(
   context: Partial<Pick<PluginRuntimeContext, 'dataStore' | 'currentMemberIdentityIdsForScope'>>,
-  scopeId: string
+  scopeId: string,
+  capabilityId?: string
 ): Promise<string[] | undefined> {
   const stored = scopeMembershipStateSchema.safeParse(await context.dataStore?.get(SCOPE_MEMBERSHIP_STATE_KEY));
   if (!stored.success || !stored.data.scopes) return context.currentMemberIdentityIdsForScope?.(scopeId);
-  return stored.data.scopes.find((scope) => scope.scopeId === scopeId)?.memberIdentityIds ?? [];
+  const scope = stored.data.scopes.find(candidate => candidate.scopeId === scopeId);
+  if (!scope) return [];
+  return capabilityId === 'account.registration.v1'
+    ? [...scope.memberIdentityIds, ...(scope.suspendedIdentityIds ?? [])] : scope.memberIdentityIds;
 }
 
 export async function refreshWorkspaceScopeMemberships(
@@ -76,27 +81,8 @@ async function refreshScopesFromHostList(
   // Timestamp the start of authoritative reads, never the end of cached processing.
   const capturedAt = new Date().toISOString();
   const enabledScopes = await context.listEnabledScopes();
-  const scopes = await Promise.all(enabledScopes.map(async (scope) => {
-    const memberIdentityIds = [...new Set(
-      await context.currentMemberIdentityIdsForScope!(scope.scopeId)
-    )].sort((left, right) => left.localeCompare(right));
-    const suspendedIdentityIds = await suspendedNonMembers(context, scope.scopeId, memberIdentityIds);
-    // The field is sent only when someone is suspended, so unchanged directories keep their digest.
-    return {
-      scopeId: scope.scopeId,
-      memberIdentityIds,
-      ...(suspendedIdentityIds.length ? { suspendedIdentityIds } : {})
-    };
-  }));
-  scopes.sort((left, right) => left.scopeId.localeCompare(right.scopeId));
-
-  const payloadSha256 = createHash('sha256')
-    .update(workspaceConnectorCanonicalJson(scopes))
-    .digest('hex');
-  const stored = scopeMembershipStateSchema.safeParse(
-    await context.dataStore.get(SCOPE_MEMBERSHIP_STATE_KEY)
-  );
-  let current = stored.success
+  const stored = scopeMembershipStateSchema.safeParse(await context.dataStore.get(SCOPE_MEMBERSHIP_STATE_KEY));
+  let current: StoredMembershipState = stored.success
     ? stored.data
     : {
         generation: 0,
@@ -109,10 +95,15 @@ async function refreshScopesFromHostList(
     current = {
       generation: current.pending.generation,
       payloadSha256: current.pending.payloadSha256,
-      publishedAt: current.pending.capturedAt
+      publishedAt: current.pending.capturedAt, scopes: current.pending.scopes
     };
     published = true;
   }
+  const scopes = await Promise.all(enabledScopes.map(async scope => moderatedMembership(context, scope.scopeId,
+    await context.currentMemberIdentityIdsForScope!(scope.scopeId),
+    current.scopes?.find(previous => previous.scopeId === scope.scopeId))));
+  scopes.sort((left, right) => left.scopeId.localeCompare(right.scopeId));
+  const payloadSha256 = createHash('sha256').update(workspaceConnectorCanonicalJson(scopes)).digest('hex');
   if (
     current.payloadSha256 === payloadSha256
     && Date.now() - Date.parse(current.publishedAt) < MEMBERSHIP_HEARTBEAT_MS
@@ -169,7 +160,7 @@ async function refreshGroupsOneAtATime(
       generation: current.pending.generation,
       payloadSha256: current.pending.payloadSha256,
       publishedAt: current.pending.capturedAt,
-      ...(current.pending.scopes ? { scopes: withoutSuspendedOverlap(current.pending.scopes) } : {}),
+      scopes: current.pending.scopes,
       ...(current.groups?.length ? { groups: current.groups } : {})
     };
   }
@@ -223,8 +214,7 @@ async function refreshGroupsOneAtATime(
     const memberIdentityIds = previous && unread.length
       ? previous.memberIdentityIds
       : unionIdentityIds(rows);
-    const suspendedIdentityIds = await suspendedNonMembers(context, scope.scopeId, memberIdentityIds);
-    scopes.push(membershipScope(scope.scopeId, memberIdentityIds, suspendedIdentityIds));
+    scopes.push(await moderatedMembership(context, scope.scopeId, memberIdentityIds, previous));
   }
   const published = await publishScopesIfChanged(context, client, installationId, current, scopes, nextGroups);
   if (rateLimit) throw preservedRateLimit(rateLimit);
@@ -283,18 +273,6 @@ function preservedRateLimit(error: unknown): Error {
   return preserved;
 }
 
-function withoutSuspendedOverlap(scopes: ReadonlyArray<{
-  scopeId: string;
-  memberIdentityIds: string[];
-  suspendedIdentityIds?: string[] | undefined;
-}>): StoredMembershipScope[] {
-  return scopes.map((scope) => membershipScope(
-    scope.scopeId,
-    scope.memberIdentityIds,
-    (scope.suspendedIdentityIds ?? []).filter((identityId) => !scope.memberIdentityIds.includes(identityId))
-  ));
-}
-
 /**
  * Re-date the last published roster so archive reads stay authorized.
  * This does not read WhatsApp.
@@ -314,11 +292,9 @@ export async function heartbeatWorkspaceScopeMemberships(
   }
   if (!stored.data.scopes) return false;
   if (Date.now() - Date.parse(stored.data.publishedAt) < MEMBERSHIP_HEARTBEAT_MS) return false;
-  await publishScopes(context, client, installationId, stored.data, stored.data.scopes.map((scope) => membershipScope(
-    scope.scopeId,
-    scope.memberIdentityIds,
-    scope.suspendedIdentityIds ?? []
-  )));
+  const scopes = await Promise.all(stored.data.scopes.map(scope =>
+    moderatedMembership(context, scope.scopeId, scope.memberIdentityIds, scope)));
+  await publishScopes(context, client, installationId, stored.data, scopes);
   return true;
 }
 
@@ -340,15 +316,11 @@ export async function noteParticipantMembership(
   if (!identityIds.length) return false;
   const groupWid = change.groupWid?.trim();
   let groups = stored.data.groups?.map((group) => ({ ...group, memberIdentityIds: [...group.memberIdentityIds] }));
-  const scopes = stored.data.scopes.map((scope) => membershipScope(
-    scope.scopeId,
-    scope.memberIdentityIds,
-    scope.suspendedIdentityIds ?? []
-  ));
+  const scopes = [...stored.data.scopes];
   let scope = scopes.find((candidate) => candidate.scopeId === change.scopeId);
   if (!scope) {
     if (!adding) return false;
-    scope = membershipScope(change.scopeId, [], []);
+    scope = { scopeId: change.scopeId, memberIdentityIds: [] };
     scopes.push(scope);
   }
   const target = scope;
@@ -366,8 +338,7 @@ export async function noteParticipantMembership(
     else for (const identityId of identityIds) members.delete(identityId);
     memberIdentityIds = [...members].sort((left, right) => left.localeCompare(right));
   }
-  const suspendedIdentityIds = await suspendedNonMembers(context, target.scopeId, memberIdentityIds);
-  const next = membershipScope(target.scopeId, memberIdentityIds, suspendedIdentityIds);
+  const next = await moderatedMembership(context, target.scopeId, memberIdentityIds, target);
   const index = scopes.findIndex((candidate) => candidate.scopeId === target.scopeId);
   scopes[index] = next;
   scopes.sort((left, right) => left.scopeId.localeCompare(right.scopeId));
@@ -387,18 +358,6 @@ export async function noteParticipantMembership(
     ...(groups?.length ? { groups } : {})
   }, scopes);
   return true;
-}
-
-function membershipScope(
-  scopeId: string,
-  memberIdentityIds: readonly string[],
-  suspendedIdentityIds: readonly string[]
-): { scopeId: string; memberIdentityIds: string[]; suspendedIdentityIds?: string[] } {
-  return {
-    scopeId,
-    memberIdentityIds: [...memberIdentityIds],
-    ...(suspendedIdentityIds.length ? { suspendedIdentityIds: [...suspendedIdentityIds] } : {})
-  };
 }
 
 async function publishScopesIfChanged(
@@ -426,7 +385,7 @@ async function publishScopesIfChanged(
     payloadSha256: current.payloadSha256,
     publishedAt: current.publishedAt,
     ...(retainedGroups ? { groups: retainedGroups } : {})
-  }, scopes.map((scope) => membershipScope(scope.scopeId, scope.memberIdentityIds, scope.suspendedIdentityIds ?? [])));
+  }, scopes);
   return true;
 }
 
@@ -435,7 +394,7 @@ async function publishScopes(
   client: WorkspaceScopeMembershipClient,
   installationId: string,
   current: { generation: number; payloadSha256: string; publishedAt: string; groups?: StoredMembershipGroup[] | undefined },
-  scopes: Array<{ scopeId: string; memberIdentityIds: string[]; suspendedIdentityIds?: string[] }>
+  scopes: StoredMembershipScope[]
 ): Promise<void> {
   const capturedAt = new Date().toISOString();
   const payloadSha256 = createHash('sha256')
@@ -461,18 +420,19 @@ async function publishScopes(
   await publishPending(context, client, installationId, request, current.groups);
 }
 
-async function suspendedNonMembers(
-  context: PluginRuntimeContext,
-  scopeId: string,
-  memberIdentityIds: readonly string[]
-): Promise<string[]> {
-  if (!context.memberStandingsForScope) return [];
-  const members = new Set(memberIdentityIds);
-  const standings = await context.memberStandingsForScope(scopeId);
-  return [...new Set(standings
-    .filter((standing) => standing.standing === 'suspended' && !members.has(standing.identityId))
-    .map((standing) => standing.identityId))]
-    .sort((left, right) => left.localeCompare(right));
+/** A lifted suspension preserves approval while WhatsApp waits for the member to accept an invitation.
+ * A pending return carries no membership or archive rights. An expulsion cancels it. */
+async function moderatedMembership(context: PluginRuntimeContext, scopeId: string, observed: readonly string[],
+  previous?: StoredMembershipScope): Promise<StoredMembershipScope> {
+  const standings = await context.memberStandingsForScope?.(scopeId) ?? [];
+  const held = new Map(standings.map(row => [row.identityId, row.standing]));
+  const members = new Set(observed.filter(id => !held.has(id)));
+  const suspended = [...held].filter(([,kind]) => kind === 'suspended').map(([id]) => id).sort();
+  const returning = [...new Set([...(previous?.suspendedIdentityIds ?? []), ...(previous?.returningIdentityIds ?? [])])]
+    .filter(id => !members.has(id) && !held.has(id)).sort();
+  return { scopeId, memberIdentityIds: [...members].sort((left, right) => left.localeCompare(right)),
+    ...(suspended.length ? { suspendedIdentityIds: suspended } : {}),
+    ...(returning.length ? { returningIdentityIds: returning } : {}) };
 }
 
 async function publishPending(
