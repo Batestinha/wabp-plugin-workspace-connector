@@ -59,6 +59,7 @@ import {
   type ClientCredentialsTokenProvider
 } from '@wabs/plugin-sdk/client-credentials';
 import type { WorkspaceConnectorConnection } from './config';
+import { messageLinkOutput, type MessageLinkInput } from './serviceApi';
 
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -92,6 +93,12 @@ export class WorkspaceConnectorClient {
     return this.#request('/v1/workspace-connector/v2/catalog', {
       method: 'GET', ...(signal ? { signal } : {})
     }, WorkspaceConnectorCatalogV2Schema);
+  }
+
+  messageLink(scopeId: string, link: MessageLinkInput, signal?: AbortSignal) {
+    const query = new URLSearchParams({ scopeId, ...link });
+    return this.#request(`/v1/workspace-connector/v2/message-link?${query}`,
+      { method: 'GET', timeoutMs: 2500, ...(signal ? { signal } : {}) }, messageLinkOutput);
   }
 
   standaloneGallerySettings(signal?: AbortSignal) {

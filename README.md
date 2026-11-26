@@ -1,5 +1,7 @@
 # Integration Manager
 
+Message builders can call `official.integration-manager.message-links.v1`, method `resolve`, with the delivery scope and either `{ target: "calendarPage", resourceKey }` or `{ target: "archiveOrigin" }`. The service checks the owning plugin and its scope settings, then asks Workspace for a published, reachable destination. Treat an empty URL or failed call as an absent template value. For an archive, match the returned origin against the group link from an authorized export.
+
 Connects the bot to its Workspace, handles account registration and linking through /register, and delivers requests, replies and account notices for enabled integrations.
 
 Integration Manager connects WABP to Workspace, publishes scoped memberships, and runs one delivery poller per account runtime. It owns the shared machine credential, sessions, staged media, retries and delivery receipts. Enable the connection in the required scopes. The **Website account access** switch enables registration, account linking, and sensitive WhatsApp sign-in and recovery messages. Turning off the last participating scope stops pending code delivery.

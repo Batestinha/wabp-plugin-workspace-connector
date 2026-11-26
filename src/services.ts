@@ -8,11 +8,34 @@ import { workspaceScope } from './ownership';
 import { scopeMemberIdentityIds } from './scopeMembershipDirectory';
 import {
   INVOCATION_SERVICE_ID, LEGACY_PROJECTION_SERVICE_ID, invocationInput,
+  MESSAGE_LINK_SERVICE_ID, messageLinkInput, messageLinkOutput,
   WORKSPACE_CONNECTOR_PROJECTION_SERVICE_ID, workspaceConnectorProjectionServiceInputSchema,
   workspaceConnectorProjectionServiceOutputSchema
 } from './serviceApi';
 
 export function registerWorkspaceConnectorServices(context: PluginServiceRegistrationContext): PluginServiceRegistration[] {
+  let linkClient: WorkspaceConnectorClient | undefined;
+  const messageLinks: PluginServiceRegistration = {
+    serviceId: MESSAGE_LINK_SERVICE_ID,
+    methods: [{
+      name: 'resolve', access: 'read', inputSchema: messageLinkInput, outputSchema: messageLinkOutput, timeoutMs: 4000,
+      async handler(raw, call) {
+        const link = messageLinkInput.parse(raw);
+        const scope = await workspaceScope(context, call.scopeId);
+        const calendar = link.target === 'calendarPage';
+        const owner = calendar ? 'official.workspace-calendar' : 'official.chat-archive';
+        const capability = calendar ? 'calendar.feed.replace.v1' : 'chatarchive.web.read.v1';
+        if (!scope.grants.some(grant => grant.owner === owner && grant.capabilityId === capability)) return { url: null };
+        if (!calendar && (await context.catalog?.configFor(owner, call.scopeId))?.browserLinks !== true) return { url: null };
+        if (!linkClient) {
+          const connection = workspaceConnectorConnection(context.config);
+          if (!connection) return { url: null };
+          linkClient = new WorkspaceConnectorClient(connection);
+        }
+        return linkClient.messageLink(call.scopeId, link, call.signal);
+      }
+    }]
+  };
   const projections: PluginServiceRegistration[] = [WORKSPACE_CONNECTOR_PROJECTION_SERVICE_ID, LEGACY_PROJECTION_SERVICE_ID]
     .map(serviceId => ({
       serviceId, methods: [{
@@ -39,7 +62,7 @@ export function registerWorkspaceConnectorServices(context: PluginServiceRegistr
         }
       }]
     }));
-  return [...projections, {
+  return [...projections, messageLinks, {
     serviceId: INVOCATION_SERVICE_ID, methods: [{
       name: 'invoke', access: 'mutation', inputSchema: invocationInput,
       outputSchema: z.object({ handled: z.boolean() }).passthrough(), timeoutMs: 30_000,

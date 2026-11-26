@@ -2,7 +2,7 @@ import type { PluginManifest } from '@wabs/plugin-sdk/manifest';
 import { workspaceConnectorConfigSchema } from './config';
 import { workspaceConnectorMessages } from './messages';
 import {
-  INVOCATION_SERVICE_ID, LEGACY_PROJECTION_SERVICE_ID,
+  INVOCATION_SERVICE_ID, LEGACY_PROJECTION_SERVICE_ID, MESSAGE_LINK_SERVICE_ID,
   WORKSPACE_CONNECTOR_PROJECTION_REPLACE_METHOD,
   WORKSPACE_CONNECTOR_PROJECTION_SERVICE_ID
 } from './serviceApi';
@@ -14,7 +14,7 @@ export const WORKSPACE_CONNECTOR_AMBIENT_JOB = 'workspace-connector.ambient-even
 export const workspaceConnectorManifest: PluginManifest = {
   pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID,
   kind: 'managed_group',
-  version: '1.0.4',
+  version: '1.1.0',
   coreApiRange: '^0.3.28',
   messageNamespace: 'official.integration-manager',
   descriptionKey: 'official.integration-manager.description',
@@ -54,6 +54,9 @@ export const workspaceConnectorManifest: PluginManifest = {
   },
   eventSubscriptions: ['message', 'private.message', 'participant.change', 'group.scope.covered', 'plugin.job'],
   services: [{
+    serviceId: MESSAGE_LINK_SERVICE_ID,
+    methods: [{ name: 'resolve', access: 'read', timeoutMs: 4000 }]
+  }, {
     serviceId: INVOCATION_SERVICE_ID,
     methods: [{ name: 'invoke', access: 'mutation', timeoutMs: 30_000 }]
   }, ...[WORKSPACE_CONNECTOR_PROJECTION_SERVICE_ID, LEGACY_PROJECTION_SERVICE_ID].map(serviceId => ({
