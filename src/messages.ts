@@ -1,4 +1,5 @@
 export const workspaceConnectorMessages = {
+  'official.integration-manager.assistant.read.hub': 'Look up the community’s configured Hub link.',
   'official.integration-manager.whatsappLink.received': 'I received your response. I am checking the link.',
   'official.integration-manager.whatsappLink.cannotContinue': 'I received your response, but this link can no longer continue.',
   'official.integration-manager.otp.loginExplanation': 'Topomare sign-in code. Expires in 5 minutes. If you did not request this code, ignore this message.',

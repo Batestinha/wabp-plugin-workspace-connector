@@ -1,3 +1,4 @@
+import { registerHubRead } from './assistantReads';
 import type { BotPlugin } from './runtime';
 import { registerWorkspaceConnectorCommands } from './commands';
 import { workspaceConnectorManifest } from './manifest';
@@ -14,7 +15,7 @@ export const workspaceConnectorPlugin: BotPlugin = {
     return registerWorkspaceConnectorCancellations(context);
   },
   registerServices(context) {
-    return registerWorkspaceConnectorServices(context);
+    return [...registerWorkspaceConnectorServices(context), registerHubRead(context)];
   },
   registerHooks(context) {
     return createWorkspaceConnectorHooks(context);

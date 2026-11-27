@@ -1,4 +1,5 @@
 {
+  "official.integration-manager.assistant.read.hub": "Consulta a ligação configurada para o Hub da comunidade.",
   "official.integration-manager.whatsappLink.received": "Recebi a tua resposta. Estou a verificar a associação.",
   "official.integration-manager.whatsappLink.cannotContinue": "Recebi a tua resposta, mas já não é possível continuar esta associação.",
   "official.integration-manager.description": "Liga o bot ao respetivo Espaço de Trabalho, gere o registo e a associação de contas através de /register e entrega pedidos, respostas e avisos de conta das integrações ativas.",

@@ -1,3 +1,4 @@
+import { hubReadDeclaration } from './assistantReads';
 import type { PluginManifest } from '@wabs/plugin-sdk/manifest';
 import { workspaceConnectorConfigSchema } from './config';
 import { workspaceConnectorMessages } from './messages';
@@ -19,8 +20,8 @@ export const workspaceConnectorManifest: PluginManifest = {
   kind: 'managed_group',
   ...relationships,
   memberSubscriptions: [],
-  version: '1.4.0',
-  coreApiRange: '^0.3.32',
+  version: '1.4.1',
+  coreApiRange: '^0.3.33',
   messageNamespace: 'official.integration-manager',
   descriptionKey: 'official.integration-manager.description',
   defaultMessages: workspaceConnectorMessages,
@@ -58,7 +59,7 @@ export const workspaceConnectorManifest: PluginManifest = {
     }]
   },
   eventSubscriptions: ['message', 'private.message', 'participant.change', 'group.scope.covered', 'plugin.job'],
-  services: [{ serviceId: 'official.integration-manager.calendar-subscriptions.v1', methods: [{ name: 'read', access: 'read' }] }, {
+  services: [hubReadDeclaration, { serviceId: 'official.integration-manager.calendar-subscriptions.v1', methods: [{ name: 'read', access: 'read' }] }, {
     serviceId: MESSAGE_LINK_SERVICE_ID,
     methods: [{ name: 'resolve', access: 'read', timeoutMs: 4000 }]
   }, {
