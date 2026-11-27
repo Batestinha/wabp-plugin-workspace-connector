@@ -10,7 +10,7 @@ assert.ok(Array.isArray(metadata.dependencies));
 assert.ok(Array.isArray(metadata.integrations));
 assert.deepEqual(plugin.manifest.dependencies, metadata.dependencies);
 assert.deepEqual(plugin.manifest.integrations, metadata.integrations);
-assert.equal(plugin.manifest.coreApiRange, '^0.3.32');
+assert.equal(plugin.manifest.coreApiRange, '^0.3.33');
 for (const method of ['registerCommands', 'registerCancellations', 'registerHooks', 'registerServices']) assert.equal(typeof plugin[method], 'function');
 assert.equal(plugin.lifecycle, undefined);
 const pt = JSON.parse(fs.readFileSync(path.join(root, 'locales/pt-PT/official.integration-manager.json')));
