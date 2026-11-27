@@ -1,5 +1,6 @@
 import { withMessageSlot } from './messageSlot';
 import { createHash } from 'node:crypto';
+import { workspaceCapabilityContext } from './capabilityContext';
 import { workspaceClaims, workspaceScope, type WorkspaceAccess } from './ownership';
 import type { StableIdentityAddressResolution } from '@wabs/plugin-sdk/identity';
 import type { CommandMetadata } from '@wabs/plugin-sdk/command-metadata';
@@ -28,7 +29,7 @@ import { deliverWorkspacePrivateChoice, markWorkspacePrivateChoiceCompleted,
   withWorkspacePrivateSessionLock, workspacePrivatePromptReceipt, WORKSPACE_PRIVATE_CHOICE_PURPOSE } from './privatePrompts';
 
 type InvocationHost = WorkspaceAccess & Pick<PluginCommandContext,
-  'config' | 'i18n' | 'dataStore' | 'flowEngine' | 'coveredGroupsForScope' | 'enqueuePluginJob'>;
+  'config' | 'i18n' | 'dataStore' | 'flowEngine' | 'coveredGroupsForScope' | 'enqueuePluginJob' | 'services'>;
 type Invocation = Pick<CommandContext, 'locale' | 't' | 'scopeId' | 'groupWid' | 'signal'> & {
   actor: StableIdentityAddressResolution;
   message: Pick<CommandContext['message'], 'context' | 'id' | 'chatId' | 'senderDisplayName'>;
@@ -168,7 +169,8 @@ async function invokeWorkspaceAliasV2Locked(
   }
   const scopeId = requireScopeId(ctx);
   const scoped = await workspaceScope(context, scopeId, actor.identityId);
-  if (!scoped.enabled || !scoped.allowedCapabilities.includes(alias.capabilityId)) {
+  const grant = scoped.grants.find(item => item.capabilityId === alias.capabilityId);
+  if (!scoped.enabled || !grant) {
     return { handled: true, text: ctx.t('official.integration-manager.disabled'), ...withMessageSlot('official.integration-manager.disabled') };
   }
   const groupWid = ctx.groupWid?.trim() || (privateInvocation ? '' : ctx.message.chatId);
@@ -194,6 +196,10 @@ async function invokeWorkspaceAliasV2Locked(
         checkedAt: new Date().toISOString()
       };
   const workspaceActor = connectorActor(ctx);
+  const capabilityContext = await workspaceCapabilityContext(context, {
+    owner: grant.owner, capabilityId: alias.capabilityId, scopeId, actorIdentityId: actor.identityId,
+    groupWid, signal: ctx.signal
+  }, { operation: 'invoke', args: ctx.args });
   const result = await client.invokeV2({
     protocolVersion: 2,
     installationId: connection.installationId,
@@ -209,7 +215,8 @@ async function invokeWorkspaceAliasV2Locked(
     messageId: ctx.message.id,
     idempotencyKey: `whatsapp-v2:${ctx.message.id}:${alias.capabilityId}`,
     actor: workspaceActor,
-    arguments: ctx.args
+    arguments: ctx.args,
+    ...capabilityContext
   }, ctx.signal);
   const route = {
     originChatId: origin.chatId,

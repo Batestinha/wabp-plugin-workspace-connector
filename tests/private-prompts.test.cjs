@@ -621,7 +621,7 @@ test('a private continuation requesting text keeps the next human answer in Flow
   assert.deepEqual(f.callbacks[1].input, { kind: 'text', text: 'Actual human answer' });
 });
 
-async function galleryCommand(t, f) {
+async function galleryCommand(t, f, onInvoke = () => {}) {
   const capabilityId = 'gallery.media.upload.v1';
   const catalog = { protocolVersion: 2, workspaceId: 'workspace-1', workspaceLabel: 'Workspace', revision: 1,
     aliases: [{ namespace: 'gallery', capabilityId, contexts: ['private', 'group'],
@@ -633,9 +633,12 @@ async function galleryCommand(t, f) {
   t.mock.method(WorkspaceConnectorClient.prototype, 'catalog', async () => ({ protocolVersion: 1,
     workspaceId: 'workspace-1', workspaceLabel: 'Workspace', revision: 1, digestSha256: 'a'.repeat(64), aliases: [], capabilities: [] }));
   t.mock.method(WorkspaceConnectorClient.prototype, 'catalogV2', async () => catalog);
-  t.mock.method(WorkspaceConnectorClient.prototype, 'invokeV2', async input => ({ protocolVersion: 2,
-    invocationId: input.messageId, session: { sessionId: 'gallery-session', expiresAt: '2099-01-01T00:00:00.000Z' },
-    actions: [{ kind: 'choice', route: { kind: 'origin' }, prompt: 'Choose an album', choices: [{ id: 'event-1', label: 'Test Event' }] }] }));
+  t.mock.method(WorkspaceConnectorClient.prototype, 'invokeV2', async input => {
+    onInvoke(input);
+    return { protocolVersion: 2,
+      invocationId: input.messageId, session: { sessionId: 'gallery-session', expiresAt: '2099-01-01T00:00:00.000Z' },
+      actions: [{ kind: 'choice', route: { kind: 'origin' }, prompt: 'Choose an album', choices: [{ id: 'event-1', label: 'Test Event' }] }] };
+  });
   const service = plugin.registerServices(f.context).find(service => service.serviceId === 'official.integration-manager.capability.v1');
   return (messageId = 'gallery-command') => service.methods[0].handler({
     capabilityId, command: 'gallery', messageId, chatId: f.address.deliveryChatId, surface: 'private', args: []
@@ -656,6 +659,31 @@ test('/gallery owns its first private menu and consumes the first answer exactly
   await invoke();
   assert.equal(f.prompts.length, 1, 'command replay must not reopen the consumed prompt');
   assert.equal(await findWorkspaceMediaSession(f.context.dataStore, f.address.identityId), undefined);
+});
+
+test('Gallery owner context is relayed for the invocation and the bound private choice', async t => {
+  const f = fixture(t, { capabilityId: 'gallery.media.upload.v1' });
+  const serviceId = 'official.piwigo-gallery.capability-context.v1';
+  const [owner] = f.context.catalog.listManifests();
+  f.context.catalog.listManifests = () => [{ ...owner,
+    services: [{ serviceId, methods: [{ name: 'prepare', access: 'read' }] }] }];
+  const calls = [];
+  const kind = 'gallery.event-albums.v1';
+  f.context.services = { async call(request) {
+    calls.push(request);
+    return { kind, payload: request.input.operation === 'invoke' ? { candidates: [] } : { selected: null } };
+  } };
+  let start;
+  const invoke = await galleryCommand(t, f, input => { start = input; });
+  await invoke();
+  await f.handle(f.lock('event-1'));
+  assert.deepEqual(start.capabilityContext, { kind, payload: { candidates: [] } });
+  assert.deepEqual(f.callbacks[0].capabilityContext, { kind, payload: { selected: null } });
+  const binding = { serviceId, method: 'prepare', scopeId: 'scope-1', actorIdentityId: 'person-1', groupWid: 'group@g.us' };
+  assert.deepEqual(calls.map(({ signal, ...call }) => call), [
+    { ...binding, input: { capabilityId: 'gallery.media.upload.v1', operation: 'invoke', args: [] } },
+    { ...binding, input: { capabilityId: 'gallery.media.upload.v1', operation: 'choice', choiceId: 'event-1' } }
+  ]);
 });
 
 test('a new /gallery invocation retires an older locked menu without submitting its stale answer', async t => {
