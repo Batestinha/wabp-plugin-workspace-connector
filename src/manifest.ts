@@ -19,7 +19,7 @@ export const workspaceConnectorManifest: PluginManifest = {
   kind: 'managed_group',
   ...relationships,
   version: '1.2.2',
-  coreApiRange: '^0.3.28',
+  coreApiRange: '^0.3.31',
   messageNamespace: 'official.integration-manager',
   descriptionKey: 'official.integration-manager.description',
   defaultMessages: workspaceConnectorMessages,

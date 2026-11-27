@@ -9,7 +9,7 @@
   "description": "Connects the bot to its Workspace, handles account registration and linking through /register, and delivers requests, replies and account notices for enabled integrations.",
   "kind": "managed_group",
   "version": "1.2.2",
-  "coreApiRange": "^0.3.28",
+  "coreApiRange": "^0.3.31",
   "entrypoint": "dist/index.js",
   "messageNamespace": "official.integration-manager",
   "descriptionKey": "official.integration-manager.description",
