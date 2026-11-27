@@ -17,12 +17,13 @@ const { dependencies, integrations } = require('../wa-plugin.json');
 const relationships = { dependencies, integrations };
 
 export const workspaceConnectorManifest: PluginManifest = {
+  ...{ operationCatalogVersion: require('../wa-plugin.json').operationCatalogVersion },
   pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID,
   kind: 'managed_group',
   ...relationships,
   memberSubscriptions: [],
-  version: '1.4.2',
-  coreApiRange: '^0.3.33',
+  version: '1.4.3',
+  coreApiRange: '^0.3.34',
   messageNamespace: 'official.integration-manager',
   descriptionKey: 'official.integration-manager.description',
   defaultMessages: workspaceConnectorMessages,

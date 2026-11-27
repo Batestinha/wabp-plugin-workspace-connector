@@ -8,8 +8,8 @@
   },
   "description": "Connects the bot to its Workspace, handles account registration and linking through /register, and delivers requests, replies and account notices for enabled integrations.",
   "kind": "managed_group",
-  "version": "1.4.2",
-  "coreApiRange": "^0.3.33",
+  "version": "1.4.3",
+  "coreApiRange": "^0.3.34",
   "entrypoint": "dist/index.js",
   "messageNamespace": "official.integration-manager",
   "descriptionKey": "official.integration-manager.description",
@@ -434,5 +434,6 @@
       "description": "Verifies Chat Archive links included in archive deliveries."
     }
   ],
-  "memberSubscriptions": []
+  "memberSubscriptions": [],
+  "operationCatalogVersion": 1
 }
