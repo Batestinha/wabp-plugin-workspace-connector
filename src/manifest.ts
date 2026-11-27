@@ -11,11 +11,15 @@ export const WORKSPACE_CONNECTOR_PLUGIN_ID = 'official.integration-manager';
 export const WORKSPACE_CONNECTOR_SESSION_TIMER_JOB = 'workspace-connector.session-timer';
 export const WORKSPACE_CONNECTOR_AMBIENT_JOB = 'workspace-connector.ambient-event';
 
+const { dependencies, integrations } = require('../wa-plugin.json');
+const relationships = { dependencies, integrations };
+
 export const workspaceConnectorManifest: PluginManifest = {
   pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID,
   kind: 'managed_group',
-  version: '1.2.1',
-  coreApiRange: '^0.3.28',
+  ...relationships,
+  version: '1.2.2',
+  coreApiRange: '^0.3.31',
   messageNamespace: 'official.integration-manager',
   descriptionKey: 'official.integration-manager.description',
   defaultMessages: workspaceConnectorMessages,

@@ -8,8 +8,8 @@
   },
   "description": "Connects the bot to its Workspace, handles account registration and linking through /register, and delivers requests, replies and account notices for enabled integrations.",
   "kind": "managed_group",
-  "version": "1.2.1",
-  "coreApiRange": "^0.3.28",
+  "version": "1.2.2",
+  "coreApiRange": "^0.3.31",
   "entrypoint": "dist/index.js",
   "messageNamespace": "official.integration-manager",
   "descriptionKey": "official.integration-manager.description",
@@ -377,6 +377,34 @@
     {
       "capabilityId": "account.whatsapp-link.v1",
       "enabledSetting": "websiteAccountAccess"
+    }
+  ],
+  "dependencies": [],
+  "integrations": [
+    {
+      "pluginId": "official.piwigo-gallery",
+      "versionRange": "^1.0.0",
+      "description": "Routes photo and video uploads to Piwigo."
+    },
+    {
+      "pluginId": "official.workspace-calendar",
+      "versionRange": "^1.0.0",
+      "description": "Publishes calendar feeds and resolves links to the calendar."
+    },
+    {
+      "pluginId": "official.chat-archive",
+      "versionRange": "^1.0.0",
+      "description": "Connects Chat Archive website access, links and notices to the Workspace."
+    },
+    {
+      "pluginId": "official.community-events",
+      "versionRange": "*",
+      "description": "Resolves browser links for published event calendars."
+    },
+    {
+      "pluginId": "official.send-group-history",
+      "versionRange": ">=0.7.0",
+      "description": "Verifies Chat Archive links included in archive deliveries."
     }
   ]
 }
