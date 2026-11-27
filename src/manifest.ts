@@ -1,4 +1,3 @@
-import { hubReadDeclaration } from './assistantReads';
 import type { PluginManifest } from '@wabs/plugin-sdk/manifest';
 import { workspaceConnectorConfigSchema } from './config';
 import { workspaceConnectorMessages } from './messages';
@@ -12,6 +11,8 @@ export const WORKSPACE_CONNECTOR_PLUGIN_ID = 'official.integration-manager';
 export const WORKSPACE_CONNECTOR_SESSION_TIMER_JOB = 'workspace-connector.session-timer';
 export const WORKSPACE_CONNECTOR_AMBIENT_JOB = 'workspace-connector.ambient-event';
 
+const assistantService = require('../wa-plugin.json').services.find((service: { serviceId: string }) =>
+  service.serviceId === 'official.integration-manager.assistant.v1');
 const { dependencies, integrations } = require('../wa-plugin.json');
 const relationships = { dependencies, integrations };
 
@@ -20,7 +21,7 @@ export const workspaceConnectorManifest: PluginManifest = {
   kind: 'managed_group',
   ...relationships,
   memberSubscriptions: [],
-  version: '1.4.1',
+  version: '1.4.2',
   coreApiRange: '^0.3.33',
   messageNamespace: 'official.integration-manager',
   descriptionKey: 'official.integration-manager.description',
@@ -59,7 +60,7 @@ export const workspaceConnectorManifest: PluginManifest = {
     }]
   },
   eventSubscriptions: ['message', 'private.message', 'participant.change', 'group.scope.covered', 'plugin.job'],
-  services: [hubReadDeclaration, { serviceId: 'official.integration-manager.calendar-subscriptions.v1', methods: [{ name: 'read', access: 'read' }] }, {
+  services: [assistantService, { serviceId: 'official.integration-manager.calendar-subscriptions.v1', methods: [{ name: 'read', access: 'read' }] }, {
     serviceId: MESSAGE_LINK_SERVICE_ID,
     methods: [{ name: 'resolve', access: 'read', timeoutMs: 4000 }]
   }, {
