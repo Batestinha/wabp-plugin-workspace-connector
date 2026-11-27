@@ -378,6 +378,12 @@ export const WorkspaceConnectorConversationPointV2Schema = z.object({
   surface: z.enum(['private', 'group'])
 }).strict();
 
+/** Trusted input supplied by the bot plugin that owns the invoked capability. */
+export const WorkspaceConnectorCapabilityContextV2Schema = z.object({
+  kind: id,
+  payload: z.record(z.unknown())
+}).strict();
+
 export const WorkspaceConnectorInvocationV2Schema = z.object({
   protocolVersion: z.literal(WORKSPACE_CONNECTOR_PROTOCOL_VERSION_V2),
   installationId: id,
@@ -393,7 +399,8 @@ export const WorkspaceConnectorInvocationV2Schema = z.object({
   messageId: opaqueId,
   idempotencyKey: opaqueId,
   actor: WorkspaceConnectorActorSchema,
-  arguments: z.array(z.string().max(2_000)).max(64)
+  arguments: z.array(z.string().max(2_000)).max(64),
+  capabilityContext: WorkspaceConnectorCapabilityContextV2Schema.optional()
 }).strict().superRefine((value, context) => {
   if (value.scopeEvidence.scopeId !== value.scopeId) {
     context.addIssue({
@@ -438,7 +445,8 @@ export const WorkspaceConnectorSessionContinuationV2Schema = z.object({
   eventId: opaqueId,
   idempotencyKey: opaqueId,
   actor: WorkspaceConnectorActorSchema,
-  input: WorkspaceConnectorSessionInputV2Schema
+  input: WorkspaceConnectorSessionInputV2Schema,
+  capabilityContext: WorkspaceConnectorCapabilityContextV2Schema.optional()
 }).strict().superRefine((value, context) => {
   if (value.scopeEvidence.scopeId !== value.scopeId) {
     context.addIssue({

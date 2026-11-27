@@ -1,4 +1,5 @@
 import { workspaceScope } from './ownership';
+import { workspaceCapabilityContext } from './capabilityContext';
 import { createHash } from 'node:crypto';
 import { MediaAlbumObservations } from './mediaAlbumObservations';
 import { createWriteStream } from 'node:fs';
@@ -340,7 +341,7 @@ async function handleWorkspaceSessionMessageUnlocked(
   }
   if (session.schemaVersion === 2) {
     if (session.privatePromptSubjectId && !event.message.hasMedia) return;
-    return handleWorkspaceSessionMessageV2(context, client, installationId, event, session);
+    return handleWorkspaceSessionMessageV2(context, client, installationId, event, session, grant.owner);
   }
   if (event.message.hasMedia) {
     return handleMediaMessageV1(context, client, installationId, event, session);
@@ -401,7 +402,8 @@ async function handleWorkspaceSessionMessageV2(
   client: WorkspaceSessionClient,
   installationId: string,
   event: PluginMessageEvent,
-  session: StoredWorkspaceSessionV2
+  session: StoredWorkspaceSessionV2,
+  owner: string
 ): Promise<PluginAction[] | void> {
   if (event.message.hasMedia) {
     if (session.mediaChatId !== event.message.chatId) return;
@@ -423,13 +425,17 @@ async function handleWorkspaceSessionMessageV2(
     return [await reply(context, event, 'official.integration-manager.invalidChoice')];
   }
   try {
+    const capabilityId = workspaceSessionContinuationCapabilityId(session);
+    const capabilityContext = choiceId && !choiceIds ? await workspaceCapabilityContext(context, {
+      owner, capabilityId, scopeId: session.scopeId, actorIdentityId: currentActor.identityId, groupWid: session.groupWid
+    }, { operation: 'choice', choiceId }) : {};
     const result = await client.continueSessionV2({
       protocolVersion: 2,
       installationId,
       catalogRevision: session.catalogRevision,
       catalogDigestSha256: session.catalogDigestSha256,
       sessionId: session.sessionId,
-      capabilityId: workspaceSessionContinuationCapabilityId(session),
+      capabilityId,
       scopeId: session.scopeId,
       origin: session.origin,
       current: {
@@ -441,7 +447,8 @@ async function handleWorkspaceSessionMessageV2(
       eventId: event.message.id,
       idempotencyKey: `whatsapp-session-v2:${event.message.id}:${session.sessionId}`,
       actor: { identityId: currentActor.identityId, ...(currentActor.phoneNumber ? { verifiedWhatsappNumber: currentActor.phoneNumber.startsWith('+') ? currentActor.phoneNumber : `+${currentActor.phoneNumber}` } : {}) },
-      input: choiceIds ? { kind: 'choices', choiceIds } : choiceId ? { kind: 'choice', choiceId } : { kind: 'text', text: body }
+      input: choiceIds ? { kind: 'choices', choiceIds } : choiceId ? { kind: 'choice', choiceId } : { kind: 'text', text: body },
+      ...capabilityContext
     });
     return await applyWorkspaceResultV2(context, event, session, result);
   } catch (error) {

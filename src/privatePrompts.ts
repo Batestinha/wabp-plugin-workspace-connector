@@ -1,6 +1,7 @@
 import { withMessageSlot } from './messageSlot';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { workspaceCapabilityContext } from './capabilityContext';
 import type { FlowPromptLock } from '@wabs/plugin-sdk/flow-prompts';
 import type { WorkspaceConnectorClient } from './client';
 import { resolveWorkspaceActionRouteV2, workspaceActionsToPluginActionsV2 } from './commands';
@@ -30,7 +31,7 @@ const promptRecordSchema = z.object({
 type PromptRecord = z.infer<typeof promptRecordSchema>;
 type PromptContext = Pick<PluginRuntimeContext,
   'catalog' | 'flowEngine' | 'dataStore' | 'i18n' | 'sendText' | 'configFor' | 'resolveStableIdentityById'
-  | 'currentMemberIdentityIdsForScope' | 'coveredGroupsForScope' | 'enqueuePluginJob'>;
+  | 'currentMemberIdentityIdsForScope' | 'coveredGroupsForScope' | 'enqueuePluginJob' | 'services'>;
 type PromptDeliveryContext = Pick<PromptContext, 'flowEngine' | 'dataStore' | 'i18n'>;
 const privateSessionOperations = new Map<string, Promise<unknown>>();
 
@@ -235,6 +236,7 @@ async function continuePrivateChoice(
   }
   const capabilityId = workspaceSessionContinuationCapabilityId(session);
   const isWhatsappLink = capabilityId === 'account.whatsapp-link.v1';
+  let owner: string | undefined;
   // A cached link result is already authoritative: replay it to the trusted actor even
   // if policy later changes, without attempting another remote continuation.
   if (!isWhatsappLink || !record.result) {
@@ -242,7 +244,8 @@ async function continuePrivateChoice(
     if (!cannotContinue) {
       const members = await scopeMemberIdentityIds(context, session.scopeId, workspaceSessionContinuationCapabilityId(session));
       const config = await workspaceScope(context, session.scopeId, session.actorIdentityId);
-      cannotContinue = !members?.includes(actor.identityId) || !config.enabled || !config.allowedCapabilities.includes(capabilityId);
+      owner = config.grants.find(grant => grant.capabilityId === capabilityId)?.owner;
+      cannotContinue = !members?.includes(actor.identityId) || !config.enabled || !owner;
     }
     if (cannotContinue) {
       if (isWhatsappLink) {
@@ -260,6 +263,10 @@ async function continuePrivateChoice(
       await acknowledgeWhatsappLinkResponse(context, record, lock.flowPromptId, 'received');
     }
     try {
+      const capabilityContext = owner && session.choices.length && session.selectionRule !== 'MULTIPLE'
+        ? await workspaceCapabilityContext(context, {
+          owner, capabilityId, scopeId: session.scopeId, actorIdentityId: actor.identityId, groupWid: session.groupWid
+        }, { operation: 'choice', choiceId: choice.id }) : {};
       record.result = await client.continueSessionV2({
       protocolVersion: 2, installationId, catalogRevision: session.catalogRevision,
       catalogDigestSha256: session.catalogDigestSha256, sessionId: session.sessionId, capabilityId, scopeId: session.scopeId,
@@ -272,7 +279,8 @@ async function continuePrivateChoice(
         ? session.selectionRule === 'MULTIPLE'
           ? { kind: 'choices', choiceIds: lock.selectedOptions.map(option => option.id) }
           : { kind: 'choice', choiceId: choice.id }
-        : { kind: 'text', text: choice.label }
+        : { kind: 'text', text: choice.label },
+      ...capabilityContext
       });
     } catch (error) {
       if (capabilityId === 'gallery.media.upload.v1' && !record.failureNotified && context.sendText) {
