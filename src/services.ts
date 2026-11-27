@@ -62,7 +62,23 @@ export function registerWorkspaceConnectorServices(context: PluginServiceRegistr
         }
       }]
     }));
-  return [...projections, messageLinks, {
+  const calendarSubscriptions: PluginServiceRegistration = {
+    serviceId: 'official.integration-manager.calendar-subscriptions.v1',
+    methods: [{
+      name: 'read', access: 'read', inputSchema: z.object({}).strict(),
+      outputSchema: z.object({ choice: z.enum(['on', 'off']).nullable(), manageUrl: z.string().url() }).strict().nullable(),
+      async handler(_, call) {
+        if (call.callerPluginId !== 'official.workspace-calendar' || !call.actorIdentityId) return null;
+        const scope = await workspaceScope(context, call.scopeId, call.actorIdentityId);
+        if (!scope.grants.some(g => g.owner === call.callerPluginId && g.capabilityId === 'calendar.subscription.status.v1')) return null;
+        const connection = workspaceConnectorConnection(context.config);
+        if (!connection) return null;
+        linkClient ??= new WorkspaceConnectorClient(connection);
+        return linkClient.calendarSubscription(call.scopeId, call.actorIdentityId, call.signal);
+      }
+    }]
+  };
+  return [...projections, messageLinks, calendarSubscriptions, {
     serviceId: INVOCATION_SERVICE_ID, methods: [{
       name: 'invoke', access: 'mutation', inputSchema: invocationInput,
       outputSchema: z.object({ handled: z.boolean() }).passthrough(), timeoutMs: 30_000,

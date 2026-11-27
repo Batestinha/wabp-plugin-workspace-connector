@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "pluginId": "official.integration-manager",
   "name": "Integration Manager",
   "author": {
@@ -8,8 +8,8 @@
   },
   "description": "Connects the bot to its Workspace, handles account registration and linking through /register, and delivers requests, replies and account notices for enabled integrations.",
   "kind": "managed_group",
-  "version": "1.2.2",
-  "coreApiRange": "^0.3.31",
+  "version": "1.3.0",
+  "coreApiRange": "^0.3.32",
   "entrypoint": "dist/index.js",
   "messageNamespace": "official.integration-manager",
   "descriptionKey": "official.integration-manager.description",
@@ -88,9 +88,22 @@
   ],
   "services": [
     {
+      "serviceId": "official.integration-manager.calendar-subscriptions.v1",
+      "methods": [
+        {
+          "name": "read",
+          "access": "read"
+        }
+      ]
+    },
+    {
       "serviceId": "official.integration-manager.message-links.v1",
       "methods": [
-        { "name": "resolve", "access": "read", "timeoutMs": 4000 }
+        {
+          "name": "resolve",
+          "access": "read",
+          "timeoutMs": 4000
+        }
       ]
     },
     {
@@ -406,5 +419,6 @@
       "versionRange": ">=0.7.0",
       "description": "Verifies Chat Archive links included in archive deliveries."
     }
-  ]
+  ],
+  "memberSubscriptions": []
 }
