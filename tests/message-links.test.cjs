@@ -25,7 +25,20 @@ test('a URL requires the owning integration and its feature in the calling scope
       WORKSPACE_CONNECTOR_INSTALLATION_ID: 'installation', workspaceConnectorOidcClientSecret: 'fixture-only-service-secret' },
     catalog: { listManifests: () => installed, enabledFor: async (id, scope) => scope === 'scope' &&
       (id === manager || id !== owners[0].pluginId || calendarEnabled), configFor: async () => settings } };
-  const method = registerWorkspaceConnectorServices(context).find(service => service.serviceId === MESSAGE_LINK_SERVICE_ID).methods[0];
+  const services = registerWorkspaceConnectorServices(context);
+  const read = services.find(service => service.serviceId.endsWith('.calendar-subscriptions.v1')).methods[0].handler;
+  const member = { scopeId: 'scope', callerPluginId: owners[0].pluginId, actorIdentityId: 'member' };
+  const status = t.mock.method(WorkspaceConnectorClient.prototype, 'calendarSubscription', async (scope, actor) => {
+    assert.deepEqual([scope, actor], ['scope', 'member']);
+    return { choice: 'on', manageUrl: 'https://workspace.example/calendar/hub' };
+  });
+  assert.equal(await read({}, member), null);
+  owners[0].workspaceCapabilities.push({ capabilityId: 'calendar.subscription.status.v1', enabledSetting: 'publishCalendar' });
+  assert.equal(await read({}, { ...member, callerPluginId: owners[1].pluginId }), null);
+  assert.equal(await read({}, { ...member, scopeId: 'other' }), null);
+  assert.equal((await read({}, member)).choice, 'on');
+  assert.equal(status.mock.callCount(), 1);
+  const method = services.find(service => service.serviceId === MESSAGE_LINK_SERVICE_ID).methods[0];
   const calendar = { target: 'calendarPage', resourceKey: 'events' };
   const archive = { target: 'archiveOrigin' };
   const resolve = (link, scopeId = 'scope') => method.handler(link, { scopeId });

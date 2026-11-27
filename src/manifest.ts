@@ -18,8 +18,9 @@ export const workspaceConnectorManifest: PluginManifest = {
   pluginId: WORKSPACE_CONNECTOR_PLUGIN_ID,
   kind: 'managed_group',
   ...relationships,
-  version: '1.2.2',
-  coreApiRange: '^0.3.31',
+  memberSubscriptions: [],
+  version: '1.3.0',
+  coreApiRange: '^0.3.32',
   messageNamespace: 'official.integration-manager',
   descriptionKey: 'official.integration-manager.description',
   defaultMessages: workspaceConnectorMessages,
@@ -57,7 +58,7 @@ export const workspaceConnectorManifest: PluginManifest = {
     }]
   },
   eventSubscriptions: ['message', 'private.message', 'participant.change', 'group.scope.covered', 'plugin.job'],
-  services: [{
+  services: [{ serviceId: 'official.integration-manager.calendar-subscriptions.v1', methods: [{ name: 'read', access: 'read' }] }, {
     serviceId: MESSAGE_LINK_SERVICE_ID,
     methods: [{ name: 'resolve', access: 'read', timeoutMs: 4000 }]
   }, {

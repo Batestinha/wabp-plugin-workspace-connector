@@ -95,6 +95,12 @@ export class WorkspaceConnectorClient {
     }, WorkspaceConnectorCatalogV2Schema);
   }
 
+  calendarSubscription(scopeId: string, actorIdentityId: string, signal?: AbortSignal) {
+    return this.#request('/v1/workspace-connector/v2/calendar-subscription', {
+      method: 'POST', body: JSON.stringify({ scopeId, actorIdentityId }), ...(signal ? { signal } : {})
+    }, z.object({ choice: z.enum(['on', 'off']).nullable(), manageUrl: z.string().url() }).strict().nullable());
+  }
+
   messageLink(scopeId: string, link: MessageLinkInput, signal?: AbortSignal) {
     const query = new URLSearchParams({ scopeId, ...link });
     return this.#request(`/v1/workspace-connector/v2/message-link?${query}`,
